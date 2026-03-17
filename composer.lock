@@ -4,15 +4,21 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "1ba97d24bebe1efa35e151072e2eb661",
+    "content-hash": "ed0a05ebe0142911ba9360332325aa87",
     "packages": [
         {
             "name": "ez-php/console",
             "version": "0.4.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/ez-php/console.git",
+                "reference": "30b71fe02c0239e8574e18d642c6a22025fb85c2"
+            },
             "dist": {
-                "type": "path",
-                "url": "../../modules/console",
-                "reference": "423e9a51fd2b754221e6a1df5d8be503558b6fa4"
+                "type": "zip",
+                "url": "https://api.github.com/repos/ez-php/console/zipball/30b71fe02c0239e8574e18d642c6a22025fb85c2",
+                "reference": "30b71fe02c0239e8574e18d642c6a22025fb85c2",
+                "shasum": ""
             },
             "require": {
                 "php": "^8.5"
@@ -32,25 +38,7 @@
                     "EzPhp\\Console\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "Tests\\": "tests/"
-                }
-            },
-            "scripts": {
-                "cs": [
-                    "php-cs-fixer fix"
-                ],
-                "analyse": [
-                    "phpstan analyse"
-                ],
-                "test": [
-                    "phpunit"
-                ],
-                "full": [
-                    "composer analyse && composer cs && composer test"
-                ]
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
@@ -73,17 +61,21 @@
                 "issues": "https://github.com/ez-php/console/issues",
                 "source": "https://github.com/ez-php/console"
             },
-            "transport-options": {
-                "relative": true
-            }
+            "time": "2026-03-17T21:03:05+00:00"
         },
         {
             "name": "ez-php/contracts",
-            "version": "0.4.1",
+            "version": "0.4.2",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/ez-php/contracts.git",
+                "reference": "993bb29452c0c7eea3b805ee9a8d862ca8b3c00c"
+            },
             "dist": {
-                "type": "path",
-                "url": "../../modules/contracts",
-                "reference": "9071338efba782f47e5cd35c11efeb87d71b5b12"
+                "type": "zip",
+                "url": "https://api.github.com/repos/ez-php/contracts/zipball/993bb29452c0c7eea3b805ee9a8d862ca8b3c00c",
+                "reference": "993bb29452c0c7eea3b805ee9a8d862ca8b3c00c",
+                "shasum": ""
             },
             "require": {
                 "ext-pdo": "*",
@@ -104,25 +96,7 @@
                     "EzPhp\\Contracts\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "Tests\\": "tests/"
-                }
-            },
-            "scripts": {
-                "cs": [
-                    "php-cs-fixer fix"
-                ],
-                "analyse": [
-                    "phpstan analyse"
-                ],
-                "test": [
-                    "phpunit"
-                ],
-                "full": [
-                    "composer analyse && composer cs && composer test"
-                ]
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
@@ -145,17 +119,21 @@
                 "issues": "https://github.com/ez-php/contracts/issues",
                 "source": "https://github.com/ez-php/contracts"
             },
-            "transport-options": {
-                "relative": true
-            }
+            "time": "2026-03-17T22:46:43+00:00"
         },
         {
             "name": "ez-php/http",
             "version": "0.4.1",
-            "dist": {
-                "type": "path",
-                "url": "../../modules/http",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/ez-php/http.git",
                 "reference": "d61e0b9c3f97caf5e3a755960ae59ae49b50c0f7"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/ez-php/http/zipball/d61e0b9c3f97caf5e3a755960ae59ae49b50c0f7",
+                "reference": "d61e0b9c3f97caf5e3a755960ae59ae49b50c0f7",
+                "shasum": ""
             },
             "require": {
                 "php": "^8.5"
@@ -174,25 +152,7 @@
                     "EzPhp\\Http\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "Tests\\": "tests/"
-                }
-            },
-            "scripts": {
-                "cs": [
-                    "php-cs-fixer fix"
-                ],
-                "analyse": [
-                    "phpstan analyse"
-                ],
-                "test": [
-                    "phpunit"
-                ],
-                "full": [
-                    "composer analyse && composer cs && composer test"
-                ]
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
@@ -215,9 +175,7 @@
                 "issues": "https://github.com/ez-php/http/issues",
                 "source": "https://github.com/ez-php/http"
             },
-            "transport-options": {
-                "relative": true
-            }
+            "time": "2026-03-17T21:03:07+00:00"
         }
     ],
     "packages-dev": [
@@ -557,10 +515,16 @@
         {
             "name": "ez-php/docker",
             "version": "0.4.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/ez-php/docker.git",
+                "reference": "bb03f314f064b94af5ce56d486b7fec8911f274e"
+            },
             "dist": {
-                "type": "path",
-                "url": "../../modules/docker",
-                "reference": "117e7dc3c98398b2b62b11dada80aec1e0093aec"
+                "type": "zip",
+                "url": "https://api.github.com/repos/ez-php/docker/zipball/bb03f314f064b94af5ce56d486b7fec8911f274e",
+                "reference": "bb03f314f064b94af5ce56d486b7fec8911f274e",
+                "shasum": ""
             },
             "require": {
                 "php": "^8.5"
@@ -569,26 +533,30 @@
                 "bin/docker-init"
             ],
             "type": "library",
-            "scripts": {
-                "docker:init": [
-                    "php bin/docker-init"
-                ]
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
             "description": "Docker base image source and scaffolding stubs for ez-php modules and projects",
-            "transport-options": {
-                "relative": true
-            }
+            "support": {
+                "issues": "https://github.com/ez-php/docker/issues",
+                "source": "https://github.com/ez-php/docker/tree/v0.4.1"
+            },
+            "time": "2026-03-16T00:21:44+00:00"
         },
         {
             "name": "ez-php/dotenv",
             "version": "0.4.1",
-            "dist": {
-                "type": "path",
-                "url": "../../modules/dotenv",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/ez-php/dotenv.git",
                 "reference": "15f279d93a13e24135617f71e51e57717d0deb8c"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/ez-php/dotenv/zipball/15f279d93a13e24135617f71e51e57717d0deb8c",
+                "reference": "15f279d93a13e24135617f71e51e57717d0deb8c",
+                "shasum": ""
             },
             "require": {
                 "php": "^8.5"
@@ -607,25 +575,7 @@
                     "EzPhp\\Env\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "Tests\\": "tests/"
-                }
-            },
-            "scripts": {
-                "cs": [
-                    "php-cs-fixer fix"
-                ],
-                "analyse": [
-                    "phpstan analyse"
-                ],
-                "test": [
-                    "phpunit"
-                ],
-                "full": [
-                    "composer analyse && composer cs && composer test"
-                ]
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
@@ -648,17 +598,21 @@
                 "issues": "https://github.com/ez-php/dotenv/issues",
                 "source": "https://github.com/ez-php/dotenv"
             },
-            "transport-options": {
-                "relative": true
-            }
+            "time": "2026-03-17T21:03:06+00:00"
         },
         {
             "name": "ez-php/framework",
             "version": "0.4.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/ez-php/framework.git",
+                "reference": "7fd635c60c775217281be67bbed5e30f75976c35"
+            },
             "dist": {
-                "type": "path",
-                "url": "../../framework",
-                "reference": "0ebf12099f284ef5d3013cbc1671cd521f084d10"
+                "type": "zip",
+                "url": "https://api.github.com/repos/ez-php/framework/zipball/7fd635c60c775217281be67bbed5e30f75976c35",
+                "reference": "7fd635c60c775217281be67bbed5e30f75976c35",
+                "shasum": ""
             },
             "require": {
                 "ext-pdo": "*",
@@ -684,25 +638,7 @@
                     "EzPhp\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "Tests\\": "tests/"
-                }
-            },
-            "scripts": {
-                "cs": [
-                    "php-cs-fixer fix"
-                ],
-                "analyse": [
-                    "phpstan analyse"
-                ],
-                "test": [
-                    "phpunit"
-                ],
-                "full": [
-                    "composer analyse && composer cs && composer test"
-                ]
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
@@ -726,9 +662,7 @@
                 "issues": "https://github.com/ez-php/framework/issues",
                 "source": "https://github.com/ez-php/framework"
             },
-            "transport-options": {
-                "relative": true
-            }
+            "time": "2026-03-16T23:23:07+00:00"
         },
         {
             "name": "ez-php/i18n",
@@ -855,10 +789,16 @@
         {
             "name": "ez-php/testing",
             "version": "0.4.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/ez-php/testing.git",
+                "reference": "cba731a59a79516f56c23ce2a9cc79d2fa77873e"
+            },
             "dist": {
-                "type": "path",
-                "url": "../../modules/testing",
-                "reference": "6de6484378146e828e8529c5b516464419965810"
+                "type": "zip",
+                "url": "https://api.github.com/repos/ez-php/testing/zipball/cba731a59a79516f56c23ce2a9cc79d2fa77873e",
+                "reference": "cba731a59a79516f56c23ce2a9cc79d2fa77873e",
+                "shasum": ""
             },
             "require": {
                 "ez-php/contracts": "0.*",
@@ -881,25 +821,7 @@
                     "EzPhp\\Testing\\": "src/"
                 }
             },
-            "autoload-dev": {
-                "psr-4": {
-                    "Tests\\": "tests/"
-                }
-            },
-            "scripts": {
-                "cs": [
-                    "php-cs-fixer fix"
-                ],
-                "analyse": [
-                    "phpstan analyse"
-                ],
-                "test": [
-                    "phpunit"
-                ],
-                "full": [
-                    "composer analyse && composer cs && composer test"
-                ]
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
@@ -924,9 +846,7 @@
                 "issues": "https://github.com/ez-php/testing/issues",
                 "source": "https://github.com/ez-php/testing"
             },
-            "transport-options": {
-                "relative": true
-            }
+            "time": "2026-03-17T21:03:05+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",
@@ -5138,13 +5058,7 @@
     ],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": {
-        "ez-php/console": 20,
-        "ez-php/contracts": 20,
-        "ez-php/docker": 20,
-        "ez-php/framework": 20,
-        "ez-php/testing": 20
-    },
+    "stability-flags": {},
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
