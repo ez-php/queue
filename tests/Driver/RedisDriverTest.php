@@ -45,7 +45,11 @@ final class RedisDriverTest extends TestCase
         $host = (string) (getenv('REDIS_HOST') ?: '127.0.0.1');
         $port = (int) (getenv('REDIS_PORT') ?: 6379);
 
-        $this->driver = new RedisDriver($host, $port, 1); // database 1 to isolate tests
+        try {
+            $this->driver = new RedisDriver($host, $port, 1); // database 1 to isolate tests
+        } catch (\Throwable) {
+            $this->markTestSkipped("Redis is not available at {$host}:{$port}.");
+        }
         // Flush only our test keys via pop-until-null
         while ($this->driver->pop('default') !== null) {
         }
