@@ -19,14 +19,14 @@ use EzPhp\Contracts\QueueInterface;
  *
  * @package EzPhp\Queue
  */
-final class Worker
+final readonly class Worker
 {
     /**
      * Worker Constructor
      *
      * @param QueueInterface $queue
      */
-    public function __construct(private readonly QueueInterface $queue)
+    public function __construct(private QueueInterface $queue)
     {
     }
 

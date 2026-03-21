@@ -24,14 +24,14 @@ use PDO;
  *
  * @package EzPhp\Queue\Driver
  */
-final class DatabaseDriver implements QueueInterface
+final readonly class DatabaseDriver implements QueueInterface
 {
     /**
      * DatabaseDriver Constructor
      *
      * @param PDO $pdo
      */
-    public function __construct(private readonly PDO $pdo)
+    public function __construct(private PDO $pdo)
     {
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $this->createTablesIfNeeded();

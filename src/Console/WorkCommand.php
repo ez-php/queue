@@ -21,14 +21,14 @@ use EzPhp\Queue\Worker;
  *
  * @package EzPhp\Queue\Console
  */
-final class WorkCommand implements CommandInterface
+final readonly class WorkCommand implements CommandInterface
 {
     /**
      * WorkCommand Constructor
      *
      * @param Worker $worker
      */
-    public function __construct(private readonly Worker $worker)
+    public function __construct(private Worker $worker)
     {
     }
 

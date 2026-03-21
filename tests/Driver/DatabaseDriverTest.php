@@ -52,7 +52,11 @@ final class DatabaseDriverTest extends TestCase
         return new DatabaseTestJob($queue, $delay);
     }
 
-    /** @return PDOStatement */
+    /**
+     * @param string $sql
+     *
+     * @return PDOStatement
+     */
     private function pdoQuery(string $sql): PDOStatement
     {
         $stmt = $this->pdo->query($sql);
