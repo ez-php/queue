@@ -80,7 +80,17 @@ final class RedisDriver implements QueueInterface
      */
     public function push(JobInterface $job): void
     {
-        $this->redis->rPush('queues:' . $job->getQueue(), serialize($job));
+        try {
+            $payload = serialize($job);
+        } catch (\Throwable $e) {
+            throw new QueueException(
+                'Job cannot be serialized: ' . $e->getMessage(),
+                0,
+                $e,
+            );
+        }
+
+        $this->redis->rPush('queues:' . $job->getQueue(), $payload);
     }
 
     /**

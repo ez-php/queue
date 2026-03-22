@@ -48,7 +48,16 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
      */
     public function push(JobInterface $job): void
     {
-        $payload = serialize($job);
+        try {
+            $payload = serialize($job);
+        } catch (\Throwable $e) {
+            throw new QueueException(
+                'Job cannot be serialized: ' . $e->getMessage(),
+                0,
+                $e,
+            );
+        }
+
         $availableAt = time() + $job->getDelay();
 
         $this->pdo->prepare(

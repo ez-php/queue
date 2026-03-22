@@ -259,4 +259,33 @@ final class DatabaseDriverTest extends TestCase
     {
         $this->assertInstanceOf(FailedJobRepositoryInterface::class, $this->driver);
     }
+
+    public function testPushThrowsQueueExceptionForNonSerializableJob(): void
+    {
+        $job = new NonSerializableDatabaseJob();
+
+        $this->expectException(QueueException::class);
+        $this->expectExceptionMessage('Job cannot be serialized');
+
+        $this->driver->push($job);
+    }
+}
+
+/**
+ * Job with a non-serializable Closure property for serialization tests.
+ */
+final class NonSerializableDatabaseJob extends Job
+{
+    /** @var \Closure */
+    public \Closure $callback;
+
+    public function __construct()
+    {
+        $this->callback = static function (): void {
+        };
+    }
+
+    public function handle(): void
+    {
+    }
 }
