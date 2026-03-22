@@ -1,6 +1,6 @@
 {
   "name": "ez-php/queue",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Async job queue for the ez-php framework — database and Redis drivers, Worker, and queue:work command",
   "type": "library",
   "license": "MIT",
@@ -25,6 +25,7 @@
   "require-dev": {
     "ez-php/docker": "0.*",
     "ez-php/framework": "0.*",
+    "phpunit/phpunit": "^13.0",
     "phpstan/phpstan": "^2.1",
     "friendsofphp/php-cs-fixer": "^3.94",
     "phpstan/phpstan-strict-rules": "^2.0",
