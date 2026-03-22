@@ -2,6 +2,12 @@
 
 All notable changes to `ez-php/queue` are documented here.
 
+## [v0.8.3] — 2026-03-22
+
+### Documentation
+- Update CHANGELOG for v0.8.2 [skip ci] (6cc0d86)
+
+
 ## [v0.8.2] — 2026-03-22
 
 ### Documentation
