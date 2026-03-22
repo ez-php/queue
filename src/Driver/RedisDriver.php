@@ -54,7 +54,7 @@ final class RedisDriver implements QueueInterface
         $this->redis = new Redis();
 
         try {
-            $connected = $this->redis->connect($host, $port);
+            $connected = @$this->redis->connect($host, $port);
         } catch (\RedisException $e) {
             throw new QueueException("Redis connection failed: {$e->getMessage()}", previous: $e);
         }
