@@ -131,4 +131,64 @@ final class JobTest extends TestCase
         $this->assertSame(5, $copy->getDelay());
         $this->assertSame(2, $copy->getMaxTries());
     }
+
+    // ─── getRetryDelay ────────────────────────────────────────────────────────
+
+    public function testGetRetryDelayReturnsDelayWhenBackoffEmpty(): void
+    {
+        $job = $this->makeJob(delay: 5);
+
+        $this->assertSame(5, $job->getRetryDelay(1));
+        $this->assertSame(5, $job->getRetryDelay(3));
+    }
+
+    public function testGetRetryDelayUsesBackoffArray(): void
+    {
+        $job = new class () extends Job {
+            protected array $backoff = [10, 30, 60];
+
+            public function handle(): void
+            {
+            }
+        };
+
+        $this->assertSame(10, $job->getRetryDelay(1));
+        $this->assertSame(30, $job->getRetryDelay(2));
+        $this->assertSame(60, $job->getRetryDelay(3));
+    }
+
+    public function testGetRetryDelayClampsToLastBackoffEntry(): void
+    {
+        $job = new class () extends Job {
+            protected array $backoff = [10, 30];
+
+            public function handle(): void
+            {
+            }
+        };
+
+        // attempt 5 → clamped to backoff[1] = 30
+        $this->assertSame(30, $job->getRetryDelay(5));
+    }
+
+    // ─── withDelay ────────────────────────────────────────────────────────────
+
+    public function testWithDelayReturnsCloneWithNewDelay(): void
+    {
+        $job = $this->makeJob(delay: 0);
+        $delayed = $job->withDelay(30);
+
+        $this->assertNotSame($job, $delayed);
+        $this->assertSame(0, $job->getDelay());
+        $this->assertSame(30, $delayed->getDelay());
+    }
+
+    public function testWithDelayPreservesOtherProperties(): void
+    {
+        $job = $this->makeJob(queue: 'emails', delay: 0, maxTries: 5);
+        $delayed = $job->withDelay(60);
+
+        $this->assertSame('emails', $delayed->getQueue());
+        $this->assertSame(5, $delayed->getMaxTries());
+    }
 }

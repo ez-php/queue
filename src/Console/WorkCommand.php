@@ -13,10 +13,11 @@ use EzPhp\Queue\Worker;
  *
  * Console command that starts a queue worker process.
  *
- * Usage: ez queue:work [queue] [--sleep=3] [--max-jobs=0]
+ * Usage: ez queue:work [queues] [--sleep=3] [--max-jobs=0]
  *
- *   queue         Name of the queue to process (default: "default")
- *   --sleep=N     Seconds to sleep when the queue is empty (default: 3)
+ *   queues        Comma-separated list of queues in priority order
+ *                 (default: "default"). Example: "high,default,low"
+ *   --sleep=N     Seconds to sleep when all queues are empty (default: 3)
  *   --max-jobs=N  Stop after processing N jobs; 0 means run forever (default: 0)
  *
  * @package EzPhp\Queue\Console
@@ -53,7 +54,7 @@ final readonly class WorkCommand implements CommandInterface
      */
     public function getHelp(): string
     {
-        return 'Usage: ez queue:work [queue] [--sleep=3] [--max-jobs=0]';
+        return 'Usage: ez queue:work [queues] [--sleep=3] [--max-jobs=0]';
     }
 
     /**
@@ -64,14 +65,22 @@ final readonly class WorkCommand implements CommandInterface
     public function handle(array $args): int
     {
         $input = new Input($args);
-        $queue = $input->argument(0) ?? 'default';
+        $queuesArg = $input->argument(0) ?? 'default';
         $sleep = (int) $input->option('sleep', '3');
         $maxJobs = (int) $input->option('max-jobs', '0');
 
-        echo "Starting queue worker on queue [{$queue}]...\n";
+        // Support comma-separated priority queues: "high,default,low"
+        $queues = array_values(array_filter(array_map('trim', explode(',', $queuesArg))));
+
+        if ($queues === []) {
+            $queues = ['default'];
+        }
+
+        $queuesLabel = implode(', ', $queues);
+        echo "Starting queue worker on queue(s) [{$queuesLabel}]...\n";
         echo "Sleep: {$sleep}s | Max jobs: " . ($maxJobs === 0 ? 'unlimited' : (string) $maxJobs) . "\n";
 
-        $this->worker->work($queue, $sleep, $maxJobs);
+        $this->worker->work(count($queues) === 1 ? $queues[0] : $queues, $sleep, $maxJobs);
 
         return 0;
     }

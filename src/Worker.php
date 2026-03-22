@@ -17,6 +17,13 @@ use EzPhp\Contracts\QueueInterface;
  * re-queues the job (if attempts < maxTries) or records it as permanently
  * failed via $queue->failed().
  *
+ * **Priority queues:** pass an ordered list of queue names to work() /
+ * runNextJob(). The Worker tries each queue in order and processes the first
+ * job it finds, giving earlier queues higher priority.
+ *
+ * **Retry backoff:** if the job's $backoff property is set, the Worker applies
+ * the appropriate delay when re-queuing by calling Job::withDelay().
+ *
  * @package EzPhp\Queue
  */
 final readonly class Worker
@@ -31,23 +38,26 @@ final readonly class Worker
     }
 
     /**
-     * Run the worker loop indefinitely, polling the given queue.
+     * Run the worker loop indefinitely, polling the given queue(s).
      *
-     * Sleeps $sleep seconds when the queue is empty. Stops after $maxJobs
+     * Sleeps $sleep seconds when all queues are empty. Stops after $maxJobs
      * processed jobs when $maxJobs > 0 (useful for testing or one-shot workers).
      *
-     * @param string $queue   Queue name to poll.
-     * @param int    $sleep   Seconds to sleep when no job is available.
-     * @param int    $maxJobs Maximum jobs to process before exiting (0 = unlimited).
+     * When $queues is an array, queues are polled in the given order on each
+     * loop iteration — the first non-empty queue wins (priority processing).
+     *
+     * @param string|list<string> $queues  Queue name or ordered list of queue names.
+     * @param int                 $sleep   Seconds to sleep when no job is available.
+     * @param int                 $maxJobs Maximum jobs to process before exiting (0 = unlimited).
      *
      * @return void
      */
-    public function work(string $queue = 'default', int $sleep = 3, int $maxJobs = 0): void
+    public function work(string|array $queues = 'default', int $sleep = 3, int $maxJobs = 0): void
     {
         $processed = 0;
 
         while (true) {
-            $ran = $this->runNextJob($queue);
+            $ran = $this->runNextJob($queues);
 
             if (!$ran) {
                 if ($maxJobs > 0) {
@@ -68,26 +78,31 @@ final readonly class Worker
     }
 
     /**
-     * Pop and process the next available job from the given queue.
+     * Pop and process the next available job from the given queue(s).
      *
-     * Returns true if a job was found and processed (successfully or not),
-     * false if the queue was empty.
+     * When $queues is an array, queues are tried in order and the first
+     * non-empty queue is used. Returns true if a job was found and processed
+     * (successfully or not), false if all queues were empty.
      *
-     * @param string $queue
+     * @param string|list<string> $queues Queue name or ordered priority list.
      *
      * @return bool
      */
-    public function runNextJob(string $queue = 'default'): bool
+    public function runNextJob(string|array $queues = 'default'): bool
     {
-        $job = $this->queue->pop($queue);
+        $queueList = is_string($queues) ? [$queues] : $queues;
 
-        if ($job === null) {
-            return false;
+        foreach ($queueList as $queue) {
+            $job = $this->queue->pop($queue);
+
+            if ($job !== null) {
+                $this->process($job);
+
+                return true;
+            }
         }
 
-        $this->process($job);
-
-        return true;
+        return false;
     }
 
     /**
@@ -96,6 +111,10 @@ final readonly class Worker
      * Increments the attempt counter, calls handle(), and handles any
      * Throwable by either re-queuing (if retries remain) or permanently
      * failing the job.
+     *
+     * When re-queuing, the backoff delay is applied via Job::withDelay() if
+     * the job defines a $backoff array. Non-Job JobInterface implementations
+     * fall back to a plain re-push.
      *
      * @param JobInterface $job
      *
@@ -110,7 +129,10 @@ final readonly class Worker
             $job->fail($e);
 
             if ($job->getAttempts() < $job->getMaxTries()) {
-                $this->queue->push($job);
+                $toQueue = $job instanceof Job
+                    ? $job->withDelay($job->getRetryDelay($job->getAttempts()))
+                    : $job;
+                $this->queue->push($toQueue);
             } else {
                 $this->queue->failed($job, $e);
             }

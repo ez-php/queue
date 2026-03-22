@@ -51,6 +51,94 @@ final class StubQueue implements QueueInterface
 }
 
 /**
+ * Queue stub that captures the delay of each pushed job.
+ * Used to verify backoff behaviour in Worker::process().
+ */
+final class DelayCapturingQueue implements QueueInterface
+{
+    /** @var list<int> */
+    private array $capturedDelays = [];
+
+    private ?JobInterface $item = null;
+
+    public function seed(JobInterface $job): void
+    {
+        $this->item = $job;
+    }
+
+    public function push(JobInterface $job): void
+    {
+        $this->capturedDelays[] = $job->getDelay();
+        $this->item = $job;
+    }
+
+    public function pop(string $queue = 'default'): ?JobInterface
+    {
+        $item = $this->item;
+        $this->item = null;
+
+        return $item;
+    }
+
+    public function size(string $queue = 'default'): int
+    {
+        return $this->item !== null ? 1 : 0;
+    }
+
+    public function failed(JobInterface $job, \Throwable $exception): void
+    {
+    }
+
+    /** @return list<int> */
+    public function getCapturedDelays(): array
+    {
+        return $this->capturedDelays;
+    }
+}
+
+/**
+ * Queue stub that routes items by named queue and tracks pushes per queue.
+ * Used to test priority-queue behaviour.
+ */
+final class PrioritizedStubQueue implements QueueInterface
+{
+    /** @var array<string, list<JobInterface>> */
+    private array $buckets = [];
+
+    /** @var list<array{job: JobInterface, exception: \Throwable}> */
+    public array $failures = [];
+
+    public function push(JobInterface $job): void
+    {
+        $this->buckets[$job->getQueue()][] = $job;
+    }
+
+    public function enqueue(string $queue, JobInterface $job): void
+    {
+        $this->buckets[$queue][] = $job;
+    }
+
+    public function pop(string $queue = 'default'): ?JobInterface
+    {
+        if (empty($this->buckets[$queue])) {
+            return null;
+        }
+
+        return array_shift($this->buckets[$queue]);
+    }
+
+    public function size(string $queue = 'default'): int
+    {
+        return count($this->buckets[$queue] ?? []);
+    }
+
+    public function failed(JobInterface $job, \Throwable $exception): void
+    {
+        $this->failures[] = ['job' => $job, 'exception' => $exception];
+    }
+}
+
+/**
  * Job stub with tracking flags and configurable failure behaviour.
  * Defined at file scope so its public properties are visible to PHPStan.
  */
@@ -158,5 +246,112 @@ final class WorkerTest extends TestCase
         $this->assertTrue($jobs[0]->handled);
         $this->assertTrue($jobs[1]->handled);
         $this->assertFalse($jobs[2]->handled);
+    }
+
+    // ─── Priority queues ─────────────────────────────────────────────────────
+
+    public function testPriorityQueuePicksHighestPriorityFirst(): void
+    {
+        $queue = new PrioritizedStubQueue();
+        $highJob = new TrackingJob(false);
+        $defaultJob = new TrackingJob(false);
+
+        // High-priority queue has a job; default queue also has one
+        $queue->enqueue('high', $highJob);
+        $queue->enqueue('default', $defaultJob);
+
+        $worker = new Worker($queue);
+        $worker->runNextJob(['high', 'default']);
+
+        $this->assertTrue($highJob->handled, 'High-priority job should run first');
+        $this->assertFalse($defaultJob->handled, 'Default job should not run yet');
+    }
+
+    public function testPriorityQueueFallsBackToLowerPriority(): void
+    {
+        $queue = new PrioritizedStubQueue();
+        $defaultJob = new TrackingJob(false);
+
+        // High queue is empty; default queue has a job
+        $queue->enqueue('default', $defaultJob);
+
+        $worker = new Worker($queue);
+        $ran = $worker->runNextJob(['high', 'default']);
+
+        $this->assertTrue($ran);
+        $this->assertTrue($defaultJob->handled);
+    }
+
+    public function testRunNextJobWithStringQueueStillWorks(): void
+    {
+        $job = new TrackingJob(false);
+        $queue = new StubQueue([$job]);
+        $worker = new Worker($queue);
+
+        $this->assertTrue($worker->runNextJob('default'));
+        $this->assertTrue($job->handled);
+    }
+
+    public function testWorkAcceptsPriorityQueueArray(): void
+    {
+        $queue = new PrioritizedStubQueue();
+        $job1 = new TrackingJob(false);
+        $job2 = new TrackingJob(false);
+
+        $queue->enqueue('high', $job1);
+        $queue->enqueue('default', $job2);
+
+        $worker = new Worker($queue);
+        $worker->work(['high', 'default'], sleep: 0, maxJobs: 2);
+
+        $this->assertTrue($job1->handled);
+        $this->assertTrue($job2->handled);
+    }
+
+    // ─── Retry backoff ───────────────────────────────────────────────────────
+
+    public function testBackoffDelayIsAppliedOnRequeue(): void
+    {
+        $queue = new DelayCapturingQueue();
+
+        $job = new class () extends Job {
+            protected array $backoff = [10, 30, 60];
+
+            protected int $maxTries = 3;
+
+            public function handle(): void
+            {
+                throw new \RuntimeException('fail');
+            }
+        };
+
+        $queue->seed($job);
+        $worker = new Worker($queue);
+        $worker->runNextJob(); // attempt 1 → fails → re-queued with backoff[0]=10
+
+        // Only the re-queued push is captured (seed() bypasses push())
+        $this->assertSame([10], $queue->getCapturedDelays());
+    }
+
+    public function testWithoutBackoffFallsBackToDelay(): void
+    {
+        $queue = new DelayCapturingQueue();
+
+        $job = new class () extends Job {
+            protected int $delay = 5;
+
+            protected int $maxTries = 3;
+
+            public function handle(): void
+            {
+                throw new \RuntimeException('fail');
+            }
+        };
+
+        $queue->seed($job);
+        $worker = new Worker($queue);
+        $worker->runNextJob();
+
+        $this->assertSame([5], $queue->getCapturedDelays());
     }
 }

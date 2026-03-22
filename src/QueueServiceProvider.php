@@ -11,18 +11,22 @@ use EzPhp\Contracts\QueueInterface;
 use EzPhp\Contracts\ServiceProvider;
 use EzPhp\Queue\Driver\DatabaseDriver;
 use EzPhp\Queue\Driver\RedisDriver;
+use EzPhp\Queue\Scheduling\Scheduler;
 
 /**
  * Class QueueServiceProvider
  *
  * Binds QueueInterface to the driver selected by config/queue.php and
- * registers Worker with its QueueInterface dependency.
+ * registers Worker, Scheduler, and FailedJobRepositoryInterface (when the
+ * database driver is active).
  *
  * Supported drivers: database (default), redis.
  *
- * To add the WorkCommand to the CLI, call:
+ * To add queue commands to the CLI, call the relevant registerCommand() before
+ * bootstrapping:
  *   $app->registerCommand(\EzPhp\Queue\Console\WorkCommand::class)
- * before bootstrapping.
+ *   $app->registerCommand(\EzPhp\Queue\Console\FailedCommand::class)
+ *   $app->registerCommand(\EzPhp\Queue\Console\ScheduleRunCommand::class)
  *
  * @package EzPhp\Queue
  */
@@ -47,6 +51,29 @@ final class QueueServiceProvider extends ServiceProvider
         $this->app->bind(Worker::class, function (ContainerInterface $app): Worker {
             return new Worker($app->make(QueueInterface::class));
         });
+
+        $this->app->bind(Scheduler::class, function (): Scheduler {
+            return new Scheduler();
+        });
+
+        // FailedJobRepositoryInterface is only available with the database driver.
+        // The binding is registered unconditionally; resolving it when using
+        // the Redis driver will throw a ContainerException.
+        $this->app->bind(
+            FailedJobRepositoryInterface::class,
+            function (ContainerInterface $app): FailedJobRepositoryInterface {
+                $queue = $app->make(QueueInterface::class);
+
+                if (!$queue instanceof FailedJobRepositoryInterface) {
+                    throw new QueueException(
+                        'The active queue driver does not implement FailedJobRepositoryInterface. ' .
+                        'Switch to the database driver to use queue:failed.'
+                    );
+                }
+
+                return $queue;
+            }
+        );
     }
 
     /**

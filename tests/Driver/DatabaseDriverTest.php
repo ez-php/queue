@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Driver;
 
 use EzPhp\Queue\Driver\DatabaseDriver;
+use EzPhp\Queue\FailedJobRepositoryInterface;
 use EzPhp\Queue\Job;
 use EzPhp\Queue\QueueException;
 use PDO;
@@ -183,5 +184,79 @@ final class DatabaseDriverTest extends TestCase
         $this->assertNotNull($popped);
         $this->assertSame('critical', $popped->getQueue());
         $this->assertSame(1, $popped->getAttempts());
+    }
+
+    // ─── FailedJobRepositoryInterface ─────────────────────────────────────────
+
+    public function testAllReturnsEmptyArrayWhenNoFailedJobs(): void
+    {
+        $this->assertSame([], $this->driver->all());
+    }
+
+    public function testAllReturnsFailedJobRecords(): void
+    {
+        $this->driver->failed($this->makeJob(), new \RuntimeException('err1'));
+        $this->driver->failed($this->makeJob('emails'), new \RuntimeException('err2'));
+
+        $all = $this->driver->all();
+
+        $this->assertCount(2, $all);
+        $this->assertSame('default', $all[0]['queue']);
+        $this->assertSame('emails', $all[1]['queue']);
+        $this->assertStringContainsString('err1', $all[0]['exception']);
+    }
+
+    public function testRetryMovesJobBackToQueue(): void
+    {
+        $job = $this->makeJob();
+        $this->driver->failed($job, new \RuntimeException('err'));
+
+        $all = $this->driver->all();
+        $id = $all[0]['id'];
+
+        $result = $this->driver->retry($id, $this->driver);
+
+        $this->assertTrue($result);
+        $this->assertEmpty($this->driver->all());
+        $this->assertSame(1, $this->driver->size());
+    }
+
+    public function testRetryReturnsFalseForUnknownId(): void
+    {
+        $result = $this->driver->retry(9999, $this->driver);
+
+        $this->assertFalse($result);
+    }
+
+    public function testForgetDeletesSingleRecord(): void
+    {
+        $this->driver->failed($this->makeJob(), new \RuntimeException('e1'));
+        $this->driver->failed($this->makeJob(), new \RuntimeException('e2'));
+
+        $id = $this->driver->all()[0]['id'];
+        $result = $this->driver->forget($id);
+
+        $this->assertTrue($result);
+        $this->assertCount(1, $this->driver->all());
+    }
+
+    public function testForgetReturnsFalseForUnknownId(): void
+    {
+        $this->assertFalse($this->driver->forget(9999));
+    }
+
+    public function testFlushDeletesAllFailedJobs(): void
+    {
+        $this->driver->failed($this->makeJob(), new \RuntimeException('e1'));
+        $this->driver->failed($this->makeJob(), new \RuntimeException('e2'));
+
+        $this->driver->flush();
+
+        $this->assertEmpty($this->driver->all());
+    }
+
+    public function testDriverImplementsFailedJobRepositoryInterface(): void
+    {
+        $this->assertInstanceOf(FailedJobRepositoryInterface::class, $this->driver);
     }
 }

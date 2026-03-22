@@ -6,6 +6,7 @@ namespace EzPhp\Queue\Driver;
 
 use EzPhp\Contracts\JobInterface;
 use EzPhp\Contracts\QueueInterface;
+use EzPhp\Queue\FailedJobRepositoryInterface;
 use EzPhp\Queue\QueueException;
 use PDO;
 
@@ -22,9 +23,12 @@ use PDO;
  * Supports delayed jobs via the available_at column: a job with delay > 0 is
  * not returned by pop() until available_at <= NOW().
  *
+ * Implements FailedJobRepositoryInterface to support the queue:failed command
+ * (list / retry / delete / flush failed-job records).
+ *
  * @package EzPhp\Queue\Driver
  */
-final readonly class DatabaseDriver implements QueueInterface
+final readonly class DatabaseDriver implements QueueInterface, FailedJobRepositoryInterface
 {
     /**
      * DatabaseDriver Constructor
@@ -131,6 +135,92 @@ final readonly class DatabaseDriver implements QueueInterface
             date('Y-m-d H:i:s'),
         ]);
     }
+
+    // ─── FailedJobRepositoryInterface ─────────────────────────────────────────
+
+    /**
+     * Return all failed-job records in insertion order.
+     *
+     * @return list<array{id: int, queue: string, payload: string, exception: string, failed_at: string}>
+     */
+    public function all(): array
+    {
+        $stmt = $this->pdo->query(
+            'SELECT id, queue, payload, exception, failed_at FROM failed_jobs ORDER BY id ASC'
+        );
+
+        if ($stmt === false) {
+            return [];
+        }
+
+        /** @var list<array{id: int, queue: string, payload: string, exception: string, failed_at: string}> $rows */
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return $rows;
+    }
+
+    /**
+     * Move a failed job back onto its original queue.
+     *
+     * Deserializes the stored payload, pushes the job back to the queue, then
+     * removes the failed-job record. Returns false if the record does not exist
+     * or the payload cannot be deserialized to a JobInterface.
+     *
+     * @param int            $id
+     * @param QueueInterface $queue
+     *
+     * @return bool
+     */
+    public function retry(int $id, QueueInterface $queue): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT payload FROM failed_jobs WHERE id = ?');
+        $stmt->execute([$id]);
+
+        /** @var array{payload: string}|false $row */
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($row === false) {
+            return false;
+        }
+
+        $job = unserialize($row['payload']);
+
+        if (!$job instanceof JobInterface) {
+            return false;
+        }
+
+        $queue->push($job);
+        $this->pdo->prepare('DELETE FROM failed_jobs WHERE id = ?')->execute([$id]);
+
+        return true;
+    }
+
+    /**
+     * Permanently delete a single failed-job record.
+     *
+     * @param int $id
+     *
+     * @return bool Returns false if no record with that id exists.
+     */
+    public function forget(int $id): bool
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM failed_jobs WHERE id = ?');
+        $stmt->execute([$id]);
+
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Delete every failed-job record.
+     *
+     * @return void
+     */
+    public function flush(): void
+    {
+        $this->pdo->exec('DELETE FROM failed_jobs');
+    }
+
+    // ─── table setup ──────────────────────────────────────────────────────────
 
     /**
      * Create jobs and failed_jobs tables if they do not already exist.
