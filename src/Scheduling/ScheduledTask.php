@@ -174,6 +174,8 @@ final class ScheduledTask
      * Compares the cron expression against the minute, hour, day-of-month,
      * month, and day-of-week values of $now.
      *
+     * @internal Called by Scheduler::dueJobs(); not part of the public task API.
+     *
      * @param \DateTimeImmutable $now
      *
      * @return bool
@@ -195,6 +197,8 @@ final class ScheduledTask
 
     /**
      * Instantiate and return a new job instance for this task.
+     *
+     * @internal Called by ScheduleRunCommand to create the job for dispatch; not part of the public task API.
      *
      * @return JobInterface
      */
