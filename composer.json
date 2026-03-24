@@ -1,50 +1,59 @@
 {
-  "name": "ez-php/queue",
-  "version": "0.9.3",
-  "description": "Async job queue for the ez-php framework — database and Redis drivers, Worker, and queue:work command",
-  "type": "library",
-  "license": "MIT",
-  "authors": [
-    {
-      "name": "Andreas Uretschnig",
-      "email": "andreas.uretschnig@gmail.com"
+    "name": "ez-php/queue",
+    "version": "1.0.0",
+    "description": "Async job queue for the ez-php framework \u2014 database and Redis drivers, Worker, and queue:work command",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Andreas Uretschnig",
+            "email": "andreas.uretschnig@gmail.com"
+        }
+    ],
+    "keywords": [
+        "queue",
+        "jobs",
+        "worker",
+        "async",
+        "php",
+        "framework",
+        "ez-php"
+    ],
+    "homepage": "https://github.com/ez-php/queue",
+    "support": {
+        "issues": "https://github.com/ez-php/queue/issues",
+        "source": "https://github.com/ez-php/queue"
+    },
+    "require": {
+        "php": "^8.5",
+        "ext-pdo": "*",
+        "ez-php/contracts": "^1.0",
+        "ez-php/console": "^1.0"
+    },
+    "require-dev": {
+        "ez-php/docker": "^1.0",
+        "ez-php/framework": "^1.0",
+        "phpunit/phpunit": "^13.0",
+        "phpstan/phpstan": "^2.1",
+        "friendsofphp/php-cs-fixer": "^3.94",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "phpstan/phpstan-deprecation-rules": "^2.0",
+        "ez-php/testing-application": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "EzPhp\\Queue\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "cs": "php-cs-fixer fix",
+        "analyse": "phpstan analyse",
+        "test": "phpunit",
+        "full": "composer analyse && composer cs && composer test"
     }
-  ],
-  "keywords": ["queue", "jobs", "worker", "async", "php", "framework", "ez-php"],
-  "homepage": "https://github.com/ez-php/queue",
-  "support": {
-    "issues": "https://github.com/ez-php/queue/issues",
-    "source": "https://github.com/ez-php/queue"
-  },
-  "require": {
-    "php": "^8.5",
-    "ext-pdo": "*",
-    "ez-php/contracts": "0.*",
-    "ez-php/console": "0.*"
-  },
-  "require-dev": {
-    "ez-php/docker": "0.*",
-    "ez-php/framework": "0.*",
-    "phpunit/phpunit": "^13.0",
-    "phpstan/phpstan": "^2.1",
-    "friendsofphp/php-cs-fixer": "^3.94",
-    "phpstan/phpstan-strict-rules": "^2.0",
-    "phpstan/phpstan-deprecation-rules": "^2.0"
-  },
-  "autoload": {
-    "psr-4": {
-      "EzPhp\\Queue\\": "src/"
-    }
-  },
-  "autoload-dev": {
-    "psr-4": {
-      "Tests\\": "tests/"
-    }
-  },
-  "scripts": {
-    "cs": "php-cs-fixer fix",
-    "analyse": "phpstan analyse",
-    "test": "phpunit",
-    "full": "composer analyse && composer cs && composer test"
-  }
 }
