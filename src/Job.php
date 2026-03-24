@@ -113,6 +113,8 @@ abstract class Job implements JobInterface
     }
 
     /**
+     * @internal Called by Worker before each execution; not part of the public job API.
+     *
      * @return void
      */
     public function incrementAttempts(): void
@@ -126,6 +128,8 @@ abstract class Job implements JobInterface
      *
      * When $backoff is non-empty, returns $backoff[$attempt - 1] (clamped to
      * the last element). When $backoff is empty, returns $delay.
+     *
+     * @internal Called by Worker when re-queuing a failed job; not part of the public job API.
      *
      * @param int $attempt 1-based attempt count (i.e. the value of getAttempts()
      *                     after the failing attempt has been recorded).
@@ -149,6 +153,8 @@ abstract class Job implements JobInterface
      *
      * Used by the Worker to apply a backoff delay when re-queuing a failed job
      * without mutating the original instance.
+     *
+     * @internal Called by Worker for retry backoff; not part of the public job API.
      *
      * @param int $delay Seconds to delay.
      *
