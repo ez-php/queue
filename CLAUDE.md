@@ -156,7 +156,7 @@ When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array i
 
 # Package: ez-php/queue
 
-Async job queue for ez-php applications — database and Redis drivers, a Worker loop, and a `queue:work` console command.
+Async job queue for ez-php applications — database and Redis drivers, a Worker loop, failed-job management, a cron-style Scheduler, and console commands (`queue:work`, `queue:failed`, `queue:schedule`).
 
 ---
 
@@ -168,11 +168,17 @@ src/
 ├── Worker.php                      — Pops and executes jobs; handles retries and permanent failures
 ├── QueueException.php              — Base exception for all queue errors
 ├── QueueServiceProvider.php        — Binds QueueInterface and Worker to the DI container
+├── FailedJobRepositoryInterface.php — Contract for failed-job stores: all/retry/forget/flush
 ├── Driver/
-│   ├── DatabaseDriver.php          — PDO-backed driver; atomic pop via transaction; supports delayed delivery
+│   ├── DatabaseDriver.php          — PDO-backed driver; atomic pop via transaction; supports delayed delivery; implements FailedJobRepositoryInterface
 │   └── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; no delay enforcement
+├── Scheduling/
+│   ├── Scheduler.php               — Registry of recurring jobs; evaluates due tasks by cron expression
+│   └── ScheduledTask.php           — Fluent builder for a single scheduled job: everyMinutes/hourly/daily/cron
 └── Console/
-    └── WorkCommand.php             — queue:work CLI command; wraps Worker::work()
+    ├── WorkCommand.php             — queue:work CLI command; wraps Worker::work()
+    ├── FailedCommand.php           — queue:failed list|retry|delete|flush; manages the failed-job archive
+    └── ScheduleRunCommand.php      — queue:schedule; pushes due scheduled tasks onto the queue
 
 tests/
 ├── TestCase.php                    — Base PHPUnit test case
@@ -181,8 +187,15 @@ tests/
 ├── Driver/
 │   ├── DatabaseDriverTest.php      — Covers DatabaseDriver against SQLite :memory: (no MySQL needed)
 │   └── RedisDriverTest.php         — Covers RedisDriver; skipped when ext-redis is unavailable
-└── Console/
-    └── WorkCommandTest.php         — Covers WorkCommand: getName, output, maxJobs, queue name
+├── Scheduling/
+│   ├── ScheduledTaskTest.php       — Covers ScheduledTask: cron/daily/hourly/everyMinutes, isDue()
+│   └── SchedulerTest.php           — Covers Scheduler: task registration, dueNow(), job class resolution
+├── Console/
+│   ├── WorkCommandTest.php         — Covers WorkCommand: getName, output, maxJobs, queue name
+│   ├── FailedCommandTest.php       — Covers FailedCommand: list, retry, delete, flush subcommands
+│   └── ScheduleRunCommandTest.php  — Covers ScheduleRunCommand: due task dispatch, no-tasks output
+└── Integration/
+    └── WorkerLifecycleTest.php     — Integration: Worker + DatabaseDriver (SQLite) full job lifecycle
 ```
 
 ---
@@ -277,6 +290,51 @@ ez queue:work [queue] [--sleep=3] [--max-jobs=0]
 | `queue` (positional) | `'default'` | Queue to poll |
 | `--sleep=N` | `3` | Seconds to sleep on empty queue |
 | `--max-jobs=N` | `0` | Stop after N jobs; 0 = run forever |
+
+---
+
+### FailedJobRepositoryInterface (`src/FailedJobRepositoryInterface.php`)
+
+Contract for failed-job stores. `DatabaseDriver` implements it; `RedisDriver` does not.
+
+| Method | Behaviour |
+|---|---|
+| `all()` | Returns all failed job rows (id, queue, payload, exception, failed_at) |
+| `retry(int $id, QueueInterface $queue)` | Unserialises the job and re-pushes it; returns false if not found |
+| `forget(int $id)` | Deletes the record; returns false if not found |
+| `flush()` | Deletes all failed-job records |
+
+---
+
+### FailedCommand (`src/Console/FailedCommand.php`)
+
+Console command `queue:failed`. Manages permanently failed jobs.
+
+```
+ez queue:failed list
+ez queue:failed retry {id}
+ez queue:failed delete {id}
+ez queue:failed flush
+```
+
+Requires the active queue driver to implement `FailedJobRepositoryInterface` (e.g. `DatabaseDriver`).
+
+---
+
+### Scheduler + ScheduledTask (`src/Scheduling/`)
+
+`Scheduler` is a registry for recurring jobs. Application code registers tasks during `boot()`:
+
+```php
+$scheduler->job(SendDailyReport::class)->daily();
+$scheduler->job(PruneTokens::class)->hourly();
+$scheduler->job(SyncData::class)->everyMinutes(15);
+$scheduler->job(CustomJob::class)->cron('30 6 * * 1');
+```
+
+`ScheduledTask` is a fluent builder that stores the job class and its cron expression. `isDue(\DateTimeImmutable)` checks whether the expression matches the given time.
+
+`ScheduleRunCommand` (`queue:schedule`) calls `$scheduler->dueNow()` and pushes each due job onto the queue. Run from a system cron every minute: `* * * * * php ez queue:schedule`.
 
 ---
 
