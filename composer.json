@@ -1,6 +1,6 @@
 {
     "name": "ez-php/queue",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Async job queue for the ez-php framework \u2014 database and Redis drivers, Worker, and queue:work command",
     "type": "library",
     "license": "MIT",
@@ -27,18 +27,18 @@
     "require": {
         "php": "^8.5",
         "ext-pdo": "*",
-        "ez-php/contracts": "^1.0",
-        "ez-php/console": "^1.0"
+        "ez-php/contracts": "^1.1",
+        "ez-php/console": "^1.1"
     },
     "require-dev": {
-        "ez-php/docker": "^1.0",
-        "ez-php/framework": "^1.0",
+        "ez-php/docker": "^1.1",
+        "ez-php/framework": "^1.1",
         "phpunit/phpunit": "^13.0",
         "phpstan/phpstan": "^2.1",
         "friendsofphp/php-cs-fixer": "^3.94",
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpstan/phpstan-deprecation-rules": "^2.0",
-        "ez-php/testing-application": "^1.0"
+        "ez-php/testing-application": "^1.1"
     },
     "autoload": {
         "psr-4": {
