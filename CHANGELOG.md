@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [v1.2.0] — 2026-03-28
+
+### Changed
+- Updated `ez-php/contracts` dependency constraint to `^1.2`
+
+---
+
 ## [v1.0.1] — 2026-03-25
 
 ### Changed
