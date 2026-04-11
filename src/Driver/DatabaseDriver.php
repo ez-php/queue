@@ -109,12 +109,13 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
             throw new QueueException('Failed to pop job from database queue: ' . $e->getMessage(), 0, $e);
         }
 
-        /** @var array{class: string, data: string}|null $envelope */
         $envelope = json_decode($row['payload'], true, 512, JSON_THROW_ON_ERROR);
 
         if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
             throw new QueueException('Invalid job payload envelope.');
         }
+
+        /** @var array{class: string, data: string} $envelope */
 
         // Restrict deserialization to the concrete job class recorded at push() time.
         // This limits the PHP object injection surface to that one class rather than
@@ -214,12 +215,13 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
             return false;
         }
 
-        /** @var array{class: string, data: string}|null $envelope */
         $envelope = json_decode($row['payload'], true, 512, JSON_THROW_ON_ERROR);
 
         if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
             return false;
         }
+
+        /** @var array{class: string, data: string} $envelope */
 
         /** @var mixed $job */
         $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);

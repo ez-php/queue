@@ -115,12 +115,13 @@ final class RedisDriver implements QueueInterface
             return null;
         }
 
-        /** @var array{class: string, data: string}|null $envelope */
         $envelope = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
 
         if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
             throw new QueueException('Invalid job payload envelope.');
         }
+
+        /** @var array{class: string, data: string} $envelope */
 
         /** @var mixed $job */
         $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
