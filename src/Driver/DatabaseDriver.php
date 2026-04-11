@@ -49,7 +49,13 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
     public function push(JobInterface $job): void
     {
         try {
-            $payload = serialize($job);
+            // Store the job class name alongside its serialized state so that
+            // pop() can restrict allowed_classes during deserialization, limiting
+            // the PHP object injection surface to the concrete job type only.
+            $payload = json_encode([
+                'class' => get_class($job),
+                'data' => serialize($job),
+            ], JSON_THROW_ON_ERROR);
         } catch (\Throwable $e) {
             throw new QueueException(
                 'Job cannot be serialized: ' . $e->getMessage(),
@@ -103,7 +109,18 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
             throw new QueueException('Failed to pop job from database queue: ' . $e->getMessage(), 0, $e);
         }
 
-        $job = unserialize($row['payload']);
+        /** @var array{class: string, data: string}|null $envelope */
+        $envelope = json_decode($row['payload'], true, 512, JSON_THROW_ON_ERROR);
+
+        if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
+            throw new QueueException('Invalid job payload envelope.');
+        }
+
+        // Restrict deserialization to the concrete job class recorded at push() time.
+        // This limits the PHP object injection surface to that one class rather than
+        // allowing arbitrary gadget chains via unrestricted unserialize().
+        /** @var mixed $job */
+        $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
 
         if (!$job instanceof JobInterface) {
             throw new QueueException('Deserialized payload is not a JobInterface instance.');
@@ -135,11 +152,16 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
      */
     public function failed(JobInterface $job, \Throwable $exception): void
     {
+        $payload = json_encode([
+            'class' => get_class($job),
+            'data' => serialize($job),
+        ], JSON_THROW_ON_ERROR);
+
         $this->pdo->prepare(
             'INSERT INTO failed_jobs (queue, payload, exception, failed_at) VALUES (?, ?, ?, ?)'
         )->execute([
             $job->getQueue(),
-            serialize($job),
+            $payload,
             $exception->getMessage() . "\n" . $exception->getTraceAsString(),
             date('Y-m-d H:i:s'),
         ]);
@@ -192,7 +214,15 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
             return false;
         }
 
-        $job = unserialize($row['payload']);
+        /** @var array{class: string, data: string}|null $envelope */
+        $envelope = json_decode($row['payload'], true, 512, JSON_THROW_ON_ERROR);
+
+        if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
+            return false;
+        }
+
+        /** @var mixed $job */
+        $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
 
         if (!$job instanceof JobInterface) {
             return false;

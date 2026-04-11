@@ -81,7 +81,12 @@ final class RedisDriver implements QueueInterface
     public function push(JobInterface $job): void
     {
         try {
-            $payload = serialize($job);
+            // Store the job class name alongside its serialized state so that
+            // pop() can restrict allowed_classes during deserialization.
+            $payload = json_encode([
+                'class' => get_class($job),
+                'data' => serialize($job),
+            ], JSON_THROW_ON_ERROR);
         } catch (\Throwable $e) {
             throw new QueueException(
                 'Job cannot be serialized: ' . $e->getMessage(),
@@ -110,7 +115,15 @@ final class RedisDriver implements QueueInterface
             return null;
         }
 
-        $job = unserialize($payload);
+        /** @var array{class: string, data: string}|null $envelope */
+        $envelope = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+
+        if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
+            throw new QueueException('Invalid job payload envelope.');
+        }
+
+        /** @var mixed $job */
+        $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
 
         if (!$job instanceof JobInterface) {
             throw new QueueException('Deserialized payload is not a JobInterface instance.');
@@ -141,12 +154,13 @@ final class RedisDriver implements QueueInterface
      */
     public function failed(JobInterface $job, \Throwable $exception): void
     {
-        $payload = serialize([
+        $payload = json_encode([
+            'class' => get_class($job),
             'job' => serialize($job),
             'exception' => $exception->getMessage(),
             'trace' => $exception->getTraceAsString(),
             'failed_at' => date('Y-m-d H:i:s'),
-        ]);
+        ], JSON_THROW_ON_ERROR);
 
         $this->redis->rPush('queues:failed:' . $job->getQueue(), $payload);
     }
