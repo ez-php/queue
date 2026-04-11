@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace EzPhp\Queue;
 
+use EzPhp\Application\Application;
 use EzPhp\Contracts\ConfigInterface;
 use EzPhp\Contracts\ContainerInterface;
 use EzPhp\Contracts\DatabaseInterface;
 use EzPhp\Contracts\QueueInterface;
 use EzPhp\Contracts\ServiceProvider;
+use EzPhp\Queue\Console\FailedCommand;
+use EzPhp\Queue\Console\ScheduleRunCommand;
+use EzPhp\Queue\Console\WorkCommand;
 use EzPhp\Queue\Driver\DatabaseDriver;
 use EzPhp\Queue\Driver\RedisDriver;
 use EzPhp\Queue\Scheduling\Scheduler;
@@ -22,11 +26,9 @@ use EzPhp\Queue\Scheduling\Scheduler;
  *
  * Supported drivers: database (default), redis.
  *
- * To add queue commands to the CLI, call the relevant registerCommand() before
- * bootstrapping:
- *   $app->registerCommand(\EzPhp\Queue\Console\WorkCommand::class)
- *   $app->registerCommand(\EzPhp\Queue\Console\FailedCommand::class)
- *   $app->registerCommand(\EzPhp\Queue\Console\ScheduleRunCommand::class)
+ * When used with the ez-php Application, boot() auto-registers the queue
+ * console commands (queue:work, queue:failed, queue:schedule) so they are
+ * available without manual registerCommand() calls.
  *
  * @package EzPhp\Queue
  */
@@ -74,6 +76,26 @@ final class QueueServiceProvider extends ServiceProvider
                 return $queue;
             }
         );
+    }
+
+    /**
+     * Auto-register queue console commands when running inside the ez-php Application.
+     *
+     * WorkCommand (queue:work), FailedCommand (queue:failed), and
+     * ScheduleRunCommand (queue:schedule) are registered so they appear in the
+     * CLI without requiring manual $app->registerCommand() calls.
+     *
+     * @return void
+     */
+    public function boot(): void
+    {
+        if (!($this->app instanceof Application)) {
+            return;
+        }
+
+        $this->app->registerCommand(WorkCommand::class);
+        $this->app->registerCommand(FailedCommand::class);
+        $this->app->registerCommand(ScheduleRunCommand::class);
     }
 
     /**

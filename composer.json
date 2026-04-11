@@ -28,7 +28,8 @@
         "php": "^8.5",
         "ext-pdo": "*",
         "ez-php/contracts": "^1.0",
-        "ez-php/console": "^1.0"
+        "ez-php/console": "^1.0",
+        "ez-php/framework": "^1.0"
     },
     "require-dev": {
         "ez-php/docker": "^1.0",
