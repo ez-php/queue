@@ -122,6 +122,16 @@ final readonly class Worker
      */
     protected function process(JobInterface $job): void
     {
+        if ($job->getMaxTries() < 1) {
+            throw new QueueException(
+                sprintf(
+                    'Job "%s" has invalid maxTries value (%d); must be >= 1.',
+                    $job::class,
+                    $job->getMaxTries(),
+                )
+            );
+        }
+
         try {
             $job->incrementAttempts();
             $job->handle();
