@@ -176,7 +176,8 @@ src/
 │   ├── Scheduler.php               — Registry of recurring jobs; evaluates due tasks by cron expression
 │   └── ScheduledTask.php           — Fluent builder for a single scheduled job: everyMinutes/hourly/daily/cron
 └── Console/
-    ├── WorkCommand.php             — queue:work CLI command; wraps Worker::work()
+    ├── WorkCommand.php             — queue:work CLI command; wraps Worker::work(); prints stats summary on exit
+    ├── MonitorCommand.php          — queue:monitor CLI command; prints queue depth + failed-job snapshot; supports --queues and --watch
     ├── FailedCommand.php           — queue:failed list|retry|delete|flush; manages the failed-job archive
     └── ScheduleRunCommand.php      — queue:schedule; pushes due scheduled tasks onto the queue
 
@@ -191,7 +192,8 @@ tests/
 │   ├── ScheduledTaskTest.php       — Covers ScheduledTask: cron/daily/hourly/everyMinutes, isDue()
 │   └── SchedulerTest.php           — Covers Scheduler: task registration, dueNow(), job class resolution
 ├── Console/
-│   ├── WorkCommandTest.php         — Covers WorkCommand: getName, output, maxJobs, queue name
+│   ├── WorkCommandTest.php         — Covers WorkCommand: getName, output, maxJobs, queue name, stats summary
+│   ├── MonitorCommandTest.php      — Covers MonitorCommand: getName, output, queue depths, failed count, --queues option
 │   ├── FailedCommandTest.php       — Covers FailedCommand: list, retry, delete, flush subcommands
 │   └── ScheduleRunCommandTest.php  — Covers ScheduleRunCommand: due task dispatch, no-tasks output
 └── Integration/
@@ -224,9 +226,10 @@ Pops and processes jobs one at a time from a `QueueInterface`.
 
 | Method | Behaviour |
 |---|---|
-| `runNextJob(string $queue)` | Pops one job, calls `process()`, returns `true`; returns `false` if queue empty |
-| `work(string $queue, int $sleep, int $maxJobs)` | Loop: calls `runNextJob()`; sleeps `$sleep` seconds on empty; stops after `$maxJobs` (0 = infinite) |
+| `runNextJob(string\|list<string> $queues)` | Pops one job from the first non-empty queue, calls `process()`, returns `true`; returns `false` if all queues empty |
+| `work(string\|list<string> $queues, int $sleep, int $maxJobs)` | Loop: calls `runNextJob()`; sleeps `$sleep` seconds on empty; stops after `$maxJobs` (0 = infinite); resets stats counters on entry |
 | `process(JobInterface $job)` | Increments attempts, calls `handle()`; on exception: re-queues if retries remain, marks failed otherwise |
+| `getStats()` | Returns `{processed, retried, failed}` counters accumulated since the last `work()` call |
 
 Retry logic: if `getAttempts() < getMaxTries()`, the job is re-pushed with its current state (including incremented attempt count, since the whole object is serialised). On exhaustion, `$queue->failed()` is called.
 
@@ -287,9 +290,28 @@ ez queue:work [queue] [--sleep=3] [--max-jobs=0]
 
 | Arg / option | Default | Meaning |
 |---|---|---|
-| `queue` (positional) | `'default'` | Queue to poll |
+| `queue` (positional) | `'default'` | Comma-separated queue names in priority order |
 | `--sleep=N` | `3` | Seconds to sleep on empty queue |
 | `--max-jobs=N` | `0` | Stop after N jobs; 0 = run forever |
+
+On exit, prints a stats summary: `Done. Processed: N | Retried: N | Permanently failed: N`.
+
+---
+
+### MonitorCommand (`src/Console/MonitorCommand.php`)
+
+Console command `queue:monitor`. Prints a snapshot of queue depths and the failed-job count.
+
+```
+ez queue:monitor [--queues=default] [--watch=0]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--queues=q1,q2` | `'default'` | Comma-separated queue names to inspect |
+| `--watch=N` | `0` | Refresh every N seconds; 0 = single snapshot and exit |
+
+When the queue driver implements `FailedJobRepositoryInterface`, the failed-job count is shown; otherwise `n/a` is displayed.
 
 ---
 

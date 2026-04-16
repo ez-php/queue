@@ -354,4 +354,86 @@ final class WorkerTest extends TestCase
 
         $this->assertSame([5], $queue->getCapturedDelays());
     }
+
+    // ─── Stats tracking ───────────────────────────────────────────────────────
+
+    public function testGetStatsInitiallyAllZero(): void
+    {
+        $worker = new Worker(new StubQueue());
+
+        $this->assertSame(['processed' => 0, 'retried' => 0, 'failed' => 0], $worker->getStats());
+    }
+
+    public function testGetStatsCountsProcessedOnSuccess(): void
+    {
+        $worker = new Worker(new StubQueue([
+            new TrackingJob(false),
+            new TrackingJob(false),
+        ]));
+
+        $worker->work(maxJobs: 2, sleep: 0);
+
+        $this->assertSame(2, $worker->getStats()['processed']);
+        $this->assertSame(0, $worker->getStats()['retried']);
+        $this->assertSame(0, $worker->getStats()['failed']);
+    }
+
+    public function testGetStatsCountsRetriedOnTransientFailure(): void
+    {
+        // maxTries=3 → first failure triggers a retry (attempt=1 < 3)
+        $job = new TrackingJob(throws: true, maxTries: 3);
+        $worker = new Worker(new StubQueue([$job]));
+
+        $worker->runNextJob();
+
+        $stats = $worker->getStats();
+        $this->assertSame(0, $stats['processed']);
+        $this->assertSame(1, $stats['retried']);
+        $this->assertSame(0, $stats['failed']);
+    }
+
+    public function testGetStatsCountsFailedOnPermanentFailure(): void
+    {
+        // maxTries=1 → first failure is permanent
+        $job = new TrackingJob(throws: true, maxTries: 1);
+        $worker = new Worker(new StubQueue([$job]));
+
+        $worker->runNextJob();
+
+        $stats = $worker->getStats();
+        $this->assertSame(0, $stats['processed']);
+        $this->assertSame(0, $stats['retried']);
+        $this->assertSame(1, $stats['failed']);
+    }
+
+    public function testGetStatsMixedOutcomes(): void
+    {
+        $queue = new StubQueue([
+            new TrackingJob(false),           // processed
+            new TrackingJob(throws: true, maxTries: 1), // permanently failed
+            new TrackingJob(false),           // processed
+        ]);
+
+        $worker = new Worker($queue);
+        $worker->work(maxJobs: 3, sleep: 0);
+
+        $stats = $worker->getStats();
+        $this->assertSame(2, $stats['processed']);
+        $this->assertSame(0, $stats['retried']);
+        $this->assertSame(1, $stats['failed']);
+    }
+
+    public function testWorkResetsStatsOnEachCall(): void
+    {
+        $worker = new Worker(new StubQueue([new TrackingJob(false)]));
+        $worker->work(maxJobs: 1, sleep: 0);
+
+        $this->assertSame(1, $worker->getStats()['processed']);
+
+        // Second call with empty queue resets to zero
+        $worker = new Worker(new StubQueue([]));
+        $worker->work(maxJobs: 1, sleep: 0);
+
+        $this->assertSame(0, $worker->getStats()['processed']);
+    }
 }

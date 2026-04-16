@@ -82,6 +82,14 @@ final readonly class WorkCommand implements CommandInterface
 
         $this->worker->work(count($queues) === 1 ? $queues[0] : $queues, $sleep, $maxJobs);
 
+        $stats = $this->worker->getStats();
+        echo sprintf(
+            "\nDone. Processed: %d | Retried: %d | Permanently failed: %d\n",
+            $stats['processed'],
+            $stats['retried'],
+            $stats['failed'],
+        );
+
         return 0;
     }
 }

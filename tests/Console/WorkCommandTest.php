@@ -131,4 +131,31 @@ final class WorkCommandTest extends TestCase
 
         $this->assertStringContainsString('Max jobs: 2', $output);
     }
+
+    public function testHandlePrintsStatsSummaryOnExit(): void
+    {
+        $queue = $this->makeQueue([$this->makeJob(), $this->makeJob()]);
+        $worker = new Worker($queue);
+        $cmd = new WorkCommand($worker);
+
+        $output = $this->captureOutput(function () use ($cmd): void {
+            $cmd->handle(['default', '--max-jobs=2', '--sleep=0']);
+        });
+
+        $this->assertStringContainsString('Processed:', $output);
+        $this->assertStringContainsString('2', $output);
+    }
+
+    public function testHandlePrintsZeroStatsWhenQueueEmpty(): void
+    {
+        $queue = $this->makeQueue([]);
+        $worker = new Worker($queue);
+        $cmd = new WorkCommand($worker);
+
+        $output = $this->captureOutput(function () use ($cmd): void {
+            $cmd->handle(['default', '--max-jobs=1', '--sleep=0']);
+        });
+
+        $this->assertStringContainsString('Processed: 0', $output);
+    }
 }

@@ -24,17 +24,58 @@ use EzPhp\Contracts\QueueInterface;
  * **Retry backoff:** if the job's $backoff property is set, the Worker applies
  * the appropriate delay when re-queuing by calling Job::withDelay().
  *
+ * **Stats:** after work() or runNextJob() completes, call getStats() to
+ * retrieve counters for processed (success), retried, and permanently failed
+ * jobs accumulated during that run. Stats are reset at the start of each
+ * work() call.
+ *
  * @package EzPhp\Queue
  */
-final readonly class Worker
+final class Worker
 {
+    /**
+     * Jobs handled without exception during the current run.
+     *
+     * @var int
+     */
+    private int $processed = 0;
+
+    /**
+     * Jobs that failed and were re-queued (attempts < maxTries).
+     *
+     * @var int
+     */
+    private int $retried = 0;
+
+    /**
+     * Jobs that exhausted all retry attempts and were permanently failed.
+     *
+     * @var int
+     */
+    private int $failed = 0;
+
     /**
      * Worker Constructor
      *
      * @param QueueInterface $queue
      */
-    public function __construct(private QueueInterface $queue)
+    public function __construct(private readonly QueueInterface $queue)
     {
+    }
+
+    /**
+     * Return the job outcome counters accumulated since the last work() call
+     * (or since construction when work() has not been called yet).
+     *
+     * @return array{processed: int, retried: int, failed: int}
+     */
+    public function getStats(): array
+    {
+        return [
+            'processed' => $this->processed,
+            'retried' => $this->retried,
+            'failed' => $this->failed,
+        ];
     }
 
     /**
@@ -54,7 +95,11 @@ final readonly class Worker
      */
     public function work(string|array $queues = 'default', int $sleep = 3, int $maxJobs = 0): void
     {
-        $processed = 0;
+        $this->processed = 0;
+        $this->retried = 0;
+        $this->failed = 0;
+
+        $handledCount = 0;
 
         while (true) {
             $ran = $this->runNextJob($queues);
@@ -69,9 +114,9 @@ final readonly class Worker
                 continue;
             }
 
-            $processed++;
+            $handledCount++;
 
-            if ($maxJobs > 0 && $processed >= $maxJobs) {
+            if ($maxJobs > 0 && $handledCount >= $maxJobs) {
                 break;
             }
         }
@@ -135,6 +180,7 @@ final readonly class Worker
         try {
             $job->incrementAttempts();
             $job->handle();
+            $this->processed++;
         } catch (\Throwable $e) {
             $job->fail($e);
 
@@ -143,8 +189,10 @@ final readonly class Worker
                     ? $job->withDelay($job->getRetryDelay($job->getAttempts()))
                     : $job;
                 $this->queue->push($toQueue);
+                $this->retried++;
             } else {
                 $this->queue->failed($job, $e);
+                $this->failed++;
             }
         }
     }
