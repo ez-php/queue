@@ -111,6 +111,44 @@ Uses `ext-redis`. Jobs are pushed to `queues:{name}` (RPUSH) and consumed via LP
 
 Delayed delivery is **not** enforced — jobs are queued immediately regardless of `$delay`.
 
+## Failed jobs
+
+The database driver stores permanently failed jobs and exposes management commands:
+
+```bash
+php ez queue:failed list            # list all failed jobs
+php ez queue:failed retry {id}      # re-queue a failed job
+php ez queue:failed delete {id}     # delete a failed job record
+php ez queue:failed flush           # delete all failed jobs
+```
+
+## Monitoring
+
+```bash
+php ez queue:monitor                        # snapshot of queue depths + failed count
+php ez queue:monitor --queues=emails,sms    # specific queues
+php ez queue:monitor --watch=5              # refresh every 5 seconds
+```
+
+## Scheduling
+
+Register recurring jobs in a service provider's `boot()`:
+
+```php
+$scheduler = $app->make(\EzPhp\Queue\Scheduling\Scheduler::class);
+
+$scheduler->job(SendDailyReport::class)->daily();
+$scheduler->job(PruneTokens::class)->hourly();
+$scheduler->job(SyncData::class)->everyMinutes(15);
+$scheduler->job(CustomJob::class)->cron('30 6 * * 1');
+```
+
+Run `queue:schedule` every minute via system cron:
+
+```
+* * * * * php /var/www/html/ez queue:schedule
+```
+
 ## Classes
 
 | Class | Description |
@@ -118,9 +156,15 @@ Delayed delivery is **not** enforced — jobs are queued immediately regardless 
 | `Job` | Abstract base class for all jobs |
 | `Worker` | Pops and executes jobs; handles retries and permanent failures |
 | `QueueServiceProvider` | Registers `QueueInterface` and `Worker` with the DI container |
-| `Driver\DatabaseDriver` | PDO-backed driver with atomic pop and delayed delivery |
+| `Driver\DatabaseDriver` | PDO-backed driver with atomic pop, delayed delivery, and `FailedJobRepositoryInterface` |
 | `Driver\RedisDriver` | Redis-backed driver via ext-redis |
+| `FailedJobRepositoryInterface` | Contract for failed-job stores: `all()`, `retry()`, `forget()`, `flush()` |
+| `Scheduling\Scheduler` | Registry of recurring jobs; evaluates due tasks by cron expression |
+| `Scheduling\ScheduledTask` | Fluent builder: `daily()`, `hourly()`, `everyMinutes()`, `cron()` |
 | `Console\WorkCommand` | `queue:work` CLI command |
+| `Console\MonitorCommand` | `queue:monitor` CLI command |
+| `Console\FailedCommand` | `queue:failed` CLI command |
+| `Console\ScheduleRunCommand` | `queue:schedule` CLI command |
 | `QueueException` | Base exception for queue errors |
 
 ## Setup (standalone development)
