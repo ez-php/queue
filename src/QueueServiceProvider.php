@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace EzPhp\Queue;
 
-use EzPhp\Application\Application;
+use EzPhp\Contracts\CommandRegistryInterface;
 use EzPhp\Contracts\ConfigInterface;
 use EzPhp\Contracts\ContainerInterface;
 use EzPhp\Contracts\DatabaseInterface;
@@ -89,7 +89,7 @@ final class QueueServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        if (!($this->app instanceof Application)) {
+        if (!($this->app instanceof CommandRegistryInterface)) {
             return;
         }
 
