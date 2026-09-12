@@ -14,6 +14,7 @@ use EzPhp\Queue\Console\FailedCommand;
 use EzPhp\Queue\Console\ScheduleRunCommand;
 use EzPhp\Queue\Console\WorkCommand;
 use EzPhp\Queue\Driver\DatabaseDriver;
+use EzPhp\Queue\Driver\InMemoryDriver;
 use EzPhp\Queue\Driver\RedisDriver;
 use EzPhp\Queue\Scheduling\Scheduler;
 
@@ -24,7 +25,7 @@ use EzPhp\Queue\Scheduling\Scheduler;
  * registers Worker, Scheduler, and FailedJobRepositoryInterface (when the
  * database driver is active).
  *
- * Supported drivers: database (default), redis.
+ * Supported drivers: database (default), redis, memory (tests only).
  *
  * When used with the ez-php Application, boot() auto-registers the queue
  * console commands (queue:work, queue:failed, queue:schedule) so they are
@@ -46,6 +47,7 @@ final class QueueServiceProvider extends ServiceProvider
 
             return match ($driver) {
                 'redis' => $this->makeRedis($config),
+                'memory' => new InMemoryDriver(),
                 default => $this->makeDatabase($app),
             };
         });

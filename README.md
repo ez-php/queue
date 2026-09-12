@@ -111,6 +111,31 @@ Uses `ext-redis`. Jobs are pushed to `queues:{name}` (RPUSH) and consumed via LP
 
 Delayed delivery is **not** enforced — jobs are queued immediately regardless of `$delay`.
 
+### InMemory Driver (tests only)
+
+Keeps jobs in a PHP array for the lifetime of the process — no MySQL, no Redis.
+Set `QUEUE_DRIVER=memory`, or construct it directly:
+
+```php
+use EzPhp\Queue\Driver\InMemoryDriver;
+
+$queue = new InMemoryDriver();
+$queue->push(new SendWelcomeEmail($userId));
+
+$queue->size();          // 1
+$job = $queue->pop();    // SendWelcomeEmail
+$queue->failedJobs();    // [] — assert on failures in tests
+$queue->flush();         // reset between tests
+```
+
+- Honours `$queue` and `$delay`, matching the database driver (the Redis driver ignores `$delay`).
+- Jobs are serialized on push just like the persistent drivers, so a job that cannot be
+  serialized fails here too instead of passing tests and breaking in production.
+- Does **not** implement `FailedJobRepositoryInterface`, so `queue:failed` is unavailable —
+  an in-process store cannot retry or forget jobs across processes. Use `failedJobs()` instead.
+- **Not for production.** Nothing is shared between processes, so a job pushed in a web
+  request is invisible to a `queue:work` worker.
+
 ## Failed jobs
 
 The database driver stores permanently failed jobs and exposes management commands:

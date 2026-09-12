@@ -26,16 +26,20 @@ docker compose exec app composer full
 ```
 
 Executes in order:
-1. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
-2. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+1. `sync_guidelines.php --check` — fails if any `CLAUDE.md` has drifted from this file
+2. `check_test_classes.php` — fails on a duplicate test class name (all packages share the `Tests\` namespace, so a collision is a fatal error in the aggregated run, not a test failure)
+3. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
+4. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
    *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
-3. `phpunit` — all tests with coverage
+5. `phpunit` — all tests with coverage
 
 Individual commands when needed:
 ```
-composer analyse   # PHPStan only
-composer cs        # CS Fixer only
-composer test      # PHPUnit only
+composer analyse             # PHPStan only
+composer cs                  # CS Fixer only
+composer test                # PHPUnit only
+composer guidelines:check    # CLAUDE.md drift only
+composer test-classes:check  # duplicate test class names only
 ```
 
 **PHPStan:** never suppress with `@phpstan-ignore-line` — always fix the root cause.
@@ -119,7 +123,47 @@ Every module `CLAUDE.md` must follow this exact structure:
    - Testing approach and infrastructure requirements (MySQL, Redis, etc.)
    - What does **not** belong in this module
 
-### 3 — Docker scaffold
+**Do not edit part 1 by hand.** It is generated from `CODING_GUIDELINES.md` by
+`sync_guidelines.php` at the project root:
+
+```
+php sync_guidelines.php            # rewrite every out-of-sync CLAUDE.md
+php sync_guidelines.php --check    # report drift, exit 1 if any (CI / pre-commit)
+```
+
+Edit `CODING_GUIDELINES.md`, then run the script — it replaces everything before the
+`# Package:` / `# Directory:` / `# Project:` heading and preserves the hand-written
+section below it byte-for-byte. Editing a single copy only creates drift; before this
+script existed, all 40 copies had diverged.
+
+### 3 — Scaffolding a new module
+
+`make_module.php` at the project root writes the required-file set and the monorepo
+wiring in one step, wrapping `docker-init` for the Docker subset:
+
+```
+composer module:make <name> -- --description="..."
+php make_module.php <name> --description="..." --services=mysql,redis
+```
+
+`<name>` is the kebab-case package name; the namespace is derived as
+`EzPhp\<PascalCase>` unless `--namespace=` overrides it (`bignum` → `BigNum` and
+`opcache` → `OPCache` are existing exceptions the guess gets wrong).
+
+It writes `modules/<name>/` and registers the module in the four places the monorepo
+needs it — root `composer.json` (`autoload.psr-4`), `phpstan.neon`, `phpunit.xml`
+(test suite **and** coverage source), and `packages.sh` (alphabetical position).
+
+Two things stay manual on purpose:
+
+- **`CLAUDE.md` part 1** — only the `# Package:` section is generated. Run
+  `composer guidelines:sync` afterwards; baking a guidelines copy into the generator
+  would recreate the drift the sync script exists to prevent.
+- **The host-port table below** (`--services` only) — editing it marks all ~40
+  `CLAUDE.md` copies as drifted at once, so the next `composer full` would fail for
+  a brand-new module. The generator prints which ports to claim instead.
+
+### 4 — Docker scaffold
 
 Run from the new module root (requires `"ez-php/docker": "^1.0"` in `require-dev`):
 
@@ -129,35 +173,39 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
-Pass `--services` to merge MySQL/Redis service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+Pass `--services` to merge MySQL/Redis/Meilisearch service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
 ```
 vendor/bin/docker-init --services=mysql
 vendor/bin/docker-init --services=redis
+vendor/bin/docker-init --services=meilisearch
 vendor/bin/docker-init --services=mysql,redis
 ```
 
 After scaffolding:
 
-1. Adapt `docker-compose.yml` — add or remove services (MySQL, Redis) as needed
+1. Adapt `docker-compose.yml` — add or remove services (MySQL, Redis, Meilisearch) as needed
 2. Adapt `.env.example` — fill in connection defaults matching the services above
 3. Assign a unique host port for each exposed service (see table below)
 
 **Allocated host ports:**
 
-| Package | `DB_HOST_PORT` (MySQL) | `REDIS_PORT` |
-|---|---|---|
-| root (`ez-php-project`) | 3306 | 6379 |
-| `ez-php/framework` | 3307 | — |
-| `ez-php/orm` | 3309 | — |
-| `ez-php/cache` | — | 6380 |
-| `ez-php/queue` | 3310 | 6381 |
-| `ez-php/rate-limiter` | — | 6382 |
-| **next free** | **3311** | **6383** |
+| Package | `DB_HOST_PORT` (MySQL) | `REDIS_PORT` | `MEILISEARCH_PORT` |
+|---|---|---|---|
+| root (`ez-php-project`) | 3306 | 6379 | 7700 |
+| `ez-php/framework` | 3307 | — | — |
+| `ez-php/orm` | 3309 | — | — |
+| `ez-php/cache` | — | 6380 | — |
+| `ez-php/queue` | 3310 | 6381 | — |
+| `ez-php/rate-limiter` | — | 6382 | — |
+| `ez-php/search` | — | — | 7701 |
+| **next free** | **3311** | **6383** | **7702** |
 
 Only set a port for services the module actually uses. Modules without external services need no port config.
 
-### 4 — Monorepo scripts
+> The `MEILISEARCH_PORT` column is the **host** port. Inside a Compose network the service is always reachable at `http://meilisearch:7700` regardless of the host mapping — only publish-side ports need to be unique.
+
+### 5 — Monorepo scripts
 
 `packages.sh` at the project root is the **central package registry**. Both `push_all.sh` and `update_all.sh` source it — the package list lives in exactly one place.
 
@@ -182,7 +230,8 @@ src/
 ├── FailedJobRepositoryInterface.php — Contract for failed-job stores: all/retry/forget/flush
 ├── Driver/
 │   ├── DatabaseDriver.php          — PDO-backed driver; atomic pop via transaction; supports delayed delivery; implements FailedJobRepositoryInterface
-│   └── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; no delay enforcement
+│   ├── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; no delay enforcement
+│   └── InMemoryDriver.php          — in-process driver for tests; honours queue + delay; no infrastructure
 ├── Scheduling/
 │   ├── Scheduler.php               — Registry of recurring jobs; evaluates due tasks by cron expression
 │   └── ScheduledTask.php           — Fluent builder for a single scheduled job: everyMinutes/hourly/daily/cron
@@ -280,7 +329,7 @@ Binds `QueueInterface` to the driver selected by `config/queue.php`:
 
 | Config key | Type | Default | Meaning |
 |---|---|---|---|
-| `queue.driver` | string | `'database'` | `'database'` or `'redis'` |
+| `queue.driver` | string | `'database'` | `'database'`, `'redis'`, or `'memory'` (tests only) |
 | `queue.redis.host` | string | `'127.0.0.1'` | Redis hostname |
 | `queue.redis.port` | int | `6379` | Redis port |
 | `queue.redis.database` | int | `0` | Redis database index |
@@ -379,6 +428,9 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 - **RedisDriver ignores `$delay`** — Redis lists have no native deferred-delivery mechanism without sorted sets + a polling daemon. Adding that complexity to a v1 driver is premature. The `$delay` property is preserved on the job object (serialised), so switching to `DatabaseDriver` later respects whatever delay was configured.
 - **`WorkCommand` is not auto-registered** — Module service providers cannot call `$app->registerCommand()` directly (it is an `Application` method, not on `ContainerInterface`). Users register the command explicitly, keeping the module decoupled from the concrete `Application` class.
 - **`failed()` is on the interface** — Driver-specific failure stores (DB table vs Redis list) require the interface to expose a `failed()` method. The alternative (casting to a driver-specific interface in the Worker) would couple the Worker to concrete drivers.
+- **`InMemoryDriver` serializes jobs even though it holds them in memory** — Storing the object by reference would be faster, but a job that cannot be serialized would then pass its tests against the in-memory driver and fail only against `DatabaseDriver`/`RedisDriver` in production. Round-tripping through `serialize()`/`unserialize()` makes the test double reproduce the real constraint, and means a popped job is a copy rather than the pushed instance.
+- **`InMemoryDriver` honours `$delay`, unlike `RedisDriver`** — It stores an `available_at` timestamp per entry, matching `DatabaseDriver`. A test double that ignored delay would let delay-dependent code pass here and break against the database driver.
+- **`InMemoryDriver` does not implement `FailedJobRepositoryInterface`** — Failures are recorded in an array and exposed via `failedJobs()` for assertions. Implementing the repository contract would imply `queue:failed` support (retry/forget/flush across processes), which an in-process store cannot honestly provide. Resolving `FailedJobRepositoryInterface` with the memory driver active throws, exactly as it does with Redis.
 - **No static façade** — Queue dispatch is done via the injected `QueueInterface`. No `Queue::push()` static helper is provided. The framework's service locator pattern is not used here — call sites inject the interface.
 
 ---
@@ -387,6 +439,7 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 
 - **`DatabaseDriverTest`** — Uses SQLite `:memory:` via plain `PDO`. No MySQL or Docker required. All driver behaviour (push, pop, delay, failed_jobs, serialization) is covered.
 - **`RedisDriverTest`** — Requires a live Redis instance (available in Docker). Tests are skipped automatically if `ext-redis` is not loaded. Uses Redis database `1` to avoid colliding with application data.
+- **`InMemoryDriverTest`** — Covers the same contract surface as `DatabaseDriverTest` with no infrastructure at all: push/pop, FIFO order, per-queue isolation, delay handling, size, failure recording, and the serialization round-trip. Uses a named job fixture — anonymous classes cannot be unserialized.
 - **`WorkerTest`** — Uses an in-memory `QueueInterface` stub (anonymous class). No external infrastructure needed. Tests cover: empty queue, success, retry on failure, permanent failure, maxJobs stopping.
 - **`WorkCommandTest`** — Uses the same in-memory stub. Output is captured via `ob_start()`. Tests cover: getName, getDescription, getHelp, handle with queue/sleep/max-jobs options.
 - **`JobTest`** — Pure unit tests. No infrastructure. Tests cover: defaults, custom properties, attempt counter, fail override, serialization roundtrip.
@@ -398,7 +451,7 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 
 | Concern | Where it belongs |
 |---|---|
-| Job scheduling (cron-style) | Application layer or a future `ez-php/scheduler` module |
+| Job scheduling (cron-style) | `ez-php/scheduler` |
 | Async / parallel execution | Application layer (pcntl, Amp, ReactPHP) |
 | Retry backoff strategies (exponential, jitter) | Application layer (override `fail()` and re-push with modified `$delay`) |
 | Queue monitoring / dashboard | Application layer |
