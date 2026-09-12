@@ -120,6 +120,11 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
         // Restrict deserialization to the concrete job class recorded at push() time.
         // This limits the PHP object injection surface to that one class rather than
         // allowing arbitrary gadget chains via unrestricted unserialize().
+        // Note: allowed_classes only constrains the top-level class name — it does not
+        // validate the payload's own property values, so this is defense-in-depth against
+        // gadget-chain injection, not a guarantee against a malicious/corrupted row of that
+        // exact class. Acceptable under this driver's trust model (the `jobs` table is only
+        // ever written by push(), never by an untrusted external source).
         /** @var mixed $job */
         $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
 
@@ -223,6 +228,7 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
 
         /** @var array{class: string, data: string} $envelope */
 
+        // See pop()'s note on allowed_classes: same defense-in-depth limitation applies here.
         /** @var mixed $job */
         $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
 

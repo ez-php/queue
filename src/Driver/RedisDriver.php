@@ -123,6 +123,10 @@ final class RedisDriver implements QueueInterface
 
         /** @var array{class: string, data: string} $envelope */
 
+        // Restrict deserialization to the concrete job class recorded at push() time.
+        // Defense-in-depth against gadget-chain injection: allowed_classes only constrains
+        // the top-level class name, not the payload's own property values. Acceptable under
+        // this driver's trust model (the queue list is only ever written by push()).
         /** @var mixed $job */
         $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
 
