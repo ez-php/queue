@@ -24,11 +24,10 @@ Register the service provider:
 $app->register(\EzPhp\Queue\QueueServiceProvider::class);
 ```
 
-Add the worker command to the CLI:
-
-```php
-$app->registerCommand(\EzPhp\Queue\Console\WorkCommand::class);
-```
+`WorkCommand` (`queue:work`), `FailedCommand` (`queue:failed`), and `ScheduleRunCommand`
+(`queue:schedule`) are registered automatically by `QueueServiceProvider::boot()` when the
+application implements `CommandRegistryInterface` — no manual `$app->registerCommand()` call
+needed.
 
 Add `config/queue.php` to your application:
 
@@ -166,6 +165,14 @@ $scheduler->job(SendDailyReport::class)->daily();
 $scheduler->job(PruneTokens::class)->hourly();
 $scheduler->job(SyncData::class)->everyMinutes(15);
 $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
+
+// Full fluent API:
+$scheduler->job(SendMinuteDigest::class)->everyMinute();
+$scheduler->job(SweepCache::class)->hourlyAt(30);                  // minute 30 of every hour
+$scheduler->job(SendDailyReport::class)->dailyAt('8:30');           // 08:30 every day
+$scheduler->job(WeeklyDigest::class)->weekly();                     // Sunday at midnight
+$scheduler->job(BillingRun::class)->weeklyOn(1, '6:00')             // Monday at 06:00
+    ->description('Runs weekly billing');
 ```
 
 Run `queue:schedule` every minute via system cron:
@@ -185,7 +192,7 @@ Run `queue:schedule` every minute via system cron:
 | `Driver\RedisDriver` | Redis-backed driver via ext-redis |
 | `FailedJobRepositoryInterface` | Contract for failed-job stores: `all()`, `retry()`, `forget()`, `flush()` |
 | `Scheduling\Scheduler` | Registry of recurring jobs; evaluates due tasks by cron expression |
-| `Scheduling\ScheduledTask` | Fluent builder: `daily()`, `hourly()`, `everyMinutes()`, `cron()` |
+| `Scheduling\ScheduledTask` | Fluent builder: `everyMinute()`, `everyMinutes()`, `hourly()`, `hourlyAt()`, `daily()`, `dailyAt()`, `weekly()`, `weeklyOn()`, `cron()`, `description()` |
 | `Console\WorkCommand` | `queue:work` CLI command |
 | `Console\MonitorCommand` | `queue:monitor` CLI command |
 | `Console\FailedCommand` | `queue:failed` CLI command |
