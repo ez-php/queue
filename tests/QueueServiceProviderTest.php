@@ -61,6 +61,11 @@ final class QueueServiceProviderTest extends BaseTestCase
                 throw new \RuntimeException('not implemented in test stub');
             }
 
+            public function has(string $abstract): bool
+            {
+                return false;
+            }
+
             public function instance(string $abstract, object $instance): void
             {
             }
@@ -116,6 +121,11 @@ final class QueueServiceProviderTest extends BaseTestCase
             public function make(string $abstract): mixed
             {
                 throw new \RuntimeException('not implemented');
+            }
+
+            public function has(string $abstract): bool
+            {
+                return false;
             }
 
             public function instance(string $abstract, object $instance): void
