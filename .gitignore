@@ -2,3 +2,5 @@ vendor/
 .env
 var/
 .php-cs-fixer.cache
+
+/docs/superpowers/
