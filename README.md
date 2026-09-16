@@ -181,6 +181,28 @@ Run `queue:schedule` every minute via system cron:
 * * * * * php /var/www/html/ez queue:schedule
 ```
 
+## Deployment
+
+`docker/app/supervisord.conf` (root and per-module Docker scaffolds) only defines
+`php-fpm` and `nginx` by default. An application that enables `ez-php/queue` needs a
+running `queue:work` process — add a `[program:queue-worker]` block:
+
+```ini
+[program:queue-worker]
+command=php /var/www/html/ez queue:work --sleep=3
+directory=/var/www/html
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+```
+
+Append the queue name(s) and `--max-jobs`/`--sleep` options to `command=` as needed
+(see [Running the Worker](#running-the-worker)). Run multiple `[program:queue-worker-N]`
+blocks for concurrent workers on the same queue.
+
 ## Classes
 
 | Class | Description |
