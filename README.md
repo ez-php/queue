@@ -181,6 +181,16 @@ Run `queue:schedule` every minute via system cron:
 * * * * * php /var/www/html/ez queue:schedule
 ```
 
+**No overlap prevention.** If a `queue:schedule` tick is still running when
+the next one starts (many due tasks, a slow batch), both ticks evaluate
+`dueJobs()` against the same due tasks and can push the same job twice —
+this scheduler has no mutex layer. If that risk matters to your deployment,
+run `queue:schedule` through `ez-php/scheduler`'s mutex-guarded executor
+instead of cron directly; see "Reconciling with `ez-php/queue`'s own
+scheduler" in `modules/scheduler/README.md`. The two schedulers are not
+merged — this is a few lines of integration glue in your own bootstrap, not
+a required dependency.
+
 ## Deployment
 
 `docker/app/supervisord.conf` (root and per-module Docker scaffolds) only defines
