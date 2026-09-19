@@ -1,6 +1,6 @@
 {
     "name": "ez-php/queue",
-    "version": "2.4.9",
+    "version": "2.4.10",
     "description": "Async job queue for the ez-php framework \u2014 database and Redis drivers, Worker, and queue:work command",
     "type": "library",
     "license": "MIT",
