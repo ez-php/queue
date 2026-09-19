@@ -1,6 +1,6 @@
 {
     "name": "ez-php/queue",
-    "version": "2.4.4",
+    "version": "2.4.5",
     "description": "Async job queue for the ez-php framework \u2014 database and Redis drivers, Worker, and queue:work command",
     "type": "library",
     "license": "MIT",
@@ -28,10 +28,15 @@
         "php": "^8.5",
         "ext-pdo": "*",
         "ez-php/contracts": "^2.0",
-        "ez-php/console": "^2.0",
-        "ez-php/framework": "^2.0"
+        "ez-php/console": "^2.0"
+    },
+    "suggest": {
+        "ez-php/cache": "Needed for Lock\\CacheJobLock (WithoutOverlapping / ShouldBeUnique across processes)",
+        "ez-php/rate-limiter": "Needed for Middleware\\RateLimited"
     },
     "require-dev": {
+        "ez-php/cache": "^2.0",
+        "ez-php/rate-limiter": "^2.0",
         "ez-php/docker": "^2.0",
         "ez-php/framework": "^2.0",
         "phpunit/phpunit": "^13.0",

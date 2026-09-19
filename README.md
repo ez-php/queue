@@ -87,6 +87,43 @@ final class ProcessReport extends Job
 
 > **Note:** The Redis driver does not enforce `$delay`. Use the database driver for delayed job delivery.
 
+## Job middleware
+
+Middleware wraps `handle()`; return it from `Job::middleware()` (called on every run, never serialized):
+
+```php
+public function middleware(): array
+{
+    return [
+        new WithoutOverlapping($this->locks(), key: 'reports', releaseAfter: 10, expireAfter: 300),
+        new RateLimited($this->limiter(), key: 'mail', maxAttempts: 30, decaySeconds: 60),
+    ];
+}
+```
+
+A middleware that does not want the job to run now calls `$job->releaseAfter($seconds)` and returns without calling `$next`; the Worker puts the job back with that delay **without consuming an attempt**. Write your own by implementing `Middleware\JobMiddlewareInterface`.
+
+`WithoutOverlapping` and `UniqueQueue` need a `Lock\JobLockInterface`: `InMemoryJobLock` (tests / single process) or `CacheJobLock` (needs `ez-php/cache`; use a shared store such as Redis or File). `RateLimited` needs `ez-php/rate-limiter`.
+
+## Unique jobs
+
+Implement `ShouldBeUnique` (`uniqueId()`, `uniqueFor()`) and wrap your queue so duplicates are dropped while one is pending or running:
+
+```php
+$queue = new UniqueQueue($innerQueue, $locks);   // same $locks as the Worker
+// bind JobLockInterface in the container and QueueServiceProvider hands it to the Worker
+```
+
+The lock is released when the job succeeds or fails permanently, and survives retries. Note that the wrapper hides `FailedJobRepositoryInterface`, so `queue:failed` needs the unwrapped driver.
+
+## Job chains
+
+```php
+JobChain::of(new Resize($id), new Publish($id), new Notify($id))->dispatch($queue);
+```
+
+Each job is pushed only after the previous one succeeded; if one fails for good the rest is dropped. Steps must extend `Job`.
+
 ## Running the Worker
 
 ```bash
@@ -219,6 +256,10 @@ blocks for concurrent workers on the same queue.
 |---|---|
 | `Job` | Abstract base class for all jobs |
 | `Worker` | Pops and executes jobs; handles retries and permanent failures |
+| `JobChain` | `JobChain::of(...)->dispatch($queue)` — sequential jobs |
+| `ShouldBeUnique` / `UniqueQueue` | Dispatch-time de-duplication of jobs |
+| `Middleware\JobMiddlewareInterface`, `WithoutOverlapping`, `RateLimited` | Job middleware |
+| `Lock\JobLockInterface`, `InMemoryJobLock`, `CacheJobLock` | Locks used by `WithoutOverlapping` / `UniqueQueue` |
 | `QueueServiceProvider` | Registers `QueueInterface` and `Worker` with the DI container |
 | `Driver\DatabaseDriver` | PDO-backed driver with atomic pop, delayed delivery, and `FailedJobRepositoryInterface` |
 | `Driver\RedisDriver` | Redis-backed driver via ext-redis |

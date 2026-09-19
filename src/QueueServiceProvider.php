@@ -16,6 +16,7 @@ use EzPhp\Queue\Console\WorkCommand;
 use EzPhp\Queue\Driver\DatabaseDriver;
 use EzPhp\Queue\Driver\InMemoryDriver;
 use EzPhp\Queue\Driver\RedisDriver;
+use EzPhp\Queue\Lock\JobLockInterface;
 use EzPhp\Queue\Scheduling\Scheduler;
 
 /**
@@ -53,7 +54,12 @@ final class QueueServiceProvider extends ServiceProvider
         });
 
         $this->app->bind(Worker::class, function (ContainerInterface $app): Worker {
-            return new Worker($app->make(QueueInterface::class));
+            // JobLockInterface is optional: bind it (e.g. to CacheJobLock) to let the Worker
+            // release ShouldBeUnique locks that UniqueQueue took on push.
+            return new Worker(
+                $app->make(QueueInterface::class),
+                $app->has(JobLockInterface::class) ? $app->make(JobLockInterface::class) : null,
+            );
         });
 
         $this->app->bind(Scheduler::class, function (): Scheduler {

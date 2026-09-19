@@ -259,6 +259,17 @@ src/
 ├── QueueException.php              — Base exception for all queue errors
 ├── QueueServiceProvider.php        — Binds QueueInterface and Worker to the DI container
 ├── FailedJobRepositoryInterface.php — Contract for failed-job stores: all/retry/forget/flush
+├── ShouldBeUnique.php              — Marker for jobs that must not be queued twice (uniqueId(), uniqueFor())
+├── UniqueQueue.php                 — QueueInterface decorator: drops a duplicate ShouldBeUnique push while its lock is held
+├── JobChain.php                    — Builder: JobChain::of($a, $b, $c)->dispatch($queue); next job is pushed after the previous succeeded
+├── Middleware/
+│   ├── JobMiddlewareInterface.php  — handle(JobInterface, callable $next); wraps Job::handle() inside the Worker
+│   ├── WithoutOverlapping.php      — Execution-time mutual exclusion per key via JobLockInterface; blocked jobs are released
+│   └── RateLimited.php             — Throttles jobs per key via ez-php/rate-limiter (soft dependency); over-limit jobs are released
+├── Lock/
+│   ├── JobLockInterface.php        — acquire(key, ttl) / release(key); shared by WithoutOverlapping and UniqueQueue
+│   ├── InMemoryJobLock.php         — process-local lock for tests and driver=memory
+│   └── CacheJobLock.php            — ez-php/cache-backed lock (soft dependency), shared between web and worker processes
 ├── Driver/
 │   ├── DatabaseDriver.php          — PDO-backed driver; atomic pop via transaction; supports delayed delivery; implements FailedJobRepositoryInterface
 │   ├── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; no delay enforcement
@@ -276,6 +287,10 @@ tests/
 ├── TestCase.php                    — Base PHPUnit test case
 ├── JobTest.php                     — Covers Job: defaults, custom props, attempt counter, fail hook, serialization
 ├── WorkerTest.php                  — Covers Worker: runNextJob, success, retry, permanent failure, maxJobs stop
+├── JobChainTest.php                — Covers JobChain: order, next-after-success, chain dropped on permanent failure
+├── UniqueQueueTest.php             — Covers UniqueQueue + Worker lock release: duplicates, retries, success/failure release
+├── Lock/                           — InMemoryJobLock and CacheJobLock (ArrayDriver) tests
+├── Middleware/                     — Pipeline order, release-without-attempt, WithoutOverlapping, RateLimited (fixtures in MiddlewareFixtures.php)
 ├── Driver/
 │   ├── DatabaseDriverTest.php      — Covers DatabaseDriver against SQLite :memory: (no MySQL needed)
 │   └── RedisDriverTest.php         — Covers RedisDriver; skipped when ext-redis is unavailable
@@ -462,10 +477,16 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 - **`InMemoryDriver` serializes jobs even though it holds them in memory** — Storing the object by reference would be faster, but a job that cannot be serialized would then pass its tests against the in-memory driver and fail only against `DatabaseDriver`/`RedisDriver` in production. Round-tripping through `serialize()`/`unserialize()` makes the test double reproduce the real constraint, and means a popped job is a copy rather than the pushed instance.
 - **`InMemoryDriver` honours `$delay`, unlike `RedisDriver`** — It stores an `available_at` timestamp per entry, matching `DatabaseDriver`. A test double that ignored delay would let delay-dependent code pass here and break against the database driver.
 - **`InMemoryDriver` does not implement `FailedJobRepositoryInterface`** — Failures are recorded in an array and exposed via `failedJobs()` for assertions. Implementing the repository contract would imply `queue:failed` support (retry/forget/flush across processes), which an in-process store cannot honestly provide. Resolving `FailedJobRepositoryInterface` with the memory driver active throws, exactly as it does with Redis.
+- **Job middleware wraps `handle()` inside the `Worker`, not at dispatch.** `Job::middleware()` returns fresh middleware instances on every execution (they are never serialized with the job, which is why locks/limiters are passed in from the job's own `middleware()` method). Only `Job` subclasses get middleware; a bare `JobInterface` implementation runs without.
+- **A middleware skips a job by calling `Job::releaseAfter($seconds)` and not calling `$next`.** The Worker then re-pushes a copy with that delay and gives the attempt back (`Job::withRelease()`), so waiting for a lock never exhausts `maxTries`. Released jobs are deliberately not counted in `Worker::getStats()` — its array shape is public API. A middleware that skips *without* releasing leaves the job counted as processed.
+- **`ez-php/cache` and `ez-php/rate-limiter` are soft dependencies (`require-dev` + `suggest`).** `Lock\CacheJobLock` and `Middleware\RateLimited` reference them; PSR-4 only loads those classes when an application uses them, so `ez-php/queue` itself stays free of both. `JobLockInterface` is owned by this module so the core pipeline never imports cache types.
+- **Unique jobs lock on push, release in the Worker.** `UniqueQueue` (decorator) takes the lock; the `Worker` (given the same `JobLockInterface`, auto-injected by `QueueServiceProvider` when the interface is bound) releases it once the job succeeded or failed permanently. The lock is intentionally kept across retries and releases: copies the Worker re-pushes are recognised via `Job::isRequeued()`/`getAttempts()` and bypass the lock. `uniqueFor()` is the TTL safety net if a job is lost. Wrapping is opt-in and manual — the provider does not wrap `QueueInterface` itself, because a wrapper would break the `FailedJobRepositoryInterface` `instanceof` check behind `queue:failed`.
+- **Chains travel inside the serialized payload.** `JobChain::dispatch()` pushes only the first job; the remaining jobs are a private `list<Job>` on it (`Job::withChain()`), so every driver works unchanged and no extra table is needed. The Worker pushes `Job::nextInChain()` after a successful run; a permanently failed job drops the rest of the chain (no failure callbacks, no batches/progress UI — deliberately out of scope). Chain steps must extend `Job`.
 - **No static façade** — Queue dispatch is done via the injected `QueueInterface`. No `Queue::push()` static helper is provided. The framework's service locator pattern is not used here — call sites inject the interface.
 - **`Scheduling\Scheduler` has no overlap prevention, unlike `ez-php/scheduler`.** Two overlapping `queue:schedule` cron ticks can both match the same due `ScheduledTask` and push its job twice — nothing here dedups within a matching minute. This is intentional scope, not an oversight: adding mutex support would duplicate `ez-php/scheduler`'s `MutexInterface`/driver design rather than reuse it, and the two schedulers' data models (job-class-based here vs. console-command-based there) are different enough that merging them would be a real package merge. Applications that need overlap prevention run `queue:schedule` through `ez-php/scheduler`'s mutex-guarded executor instead of cron directly — documented in `modules/scheduler/README.md` § "Reconciling with `ez-php/queue`'s own scheduler" and this package's own README § "Scheduling". No code dependency between the two packages either way.
 
 ---
+- **`ez-php/framework` is a `require-dev` dependency only.** Nothing in `src/` imports a framework class — the module needs `ez-php/contracts` (`ServiceProvider`, `QueueInterface`, …) and `ez-php/console` (commands); the framework is only needed by the test suite (`ez-php/testing-application`). Declaring it in `require` would force the whole kernel onto anything that installs the queue.
 
 ## Testing Approach
 
@@ -487,6 +508,7 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 | Async / parallel execution | Application layer (pcntl, Amp, ReactPHP) |
 | Retry backoff strategies (exponential, jitter) | Application layer (override `fail()` and re-push with modified `$delay`) |
 | Queue monitoring / dashboard | Application layer |
-| Rate limiting of job processing | `ez-php/rate-limiter` |
+| Rate-limiting logic itself | `ez-php/rate-limiter` (this module only ships the `Middleware\RateLimited` adapter) |
+| Batches with progress tracking / dashboards | Application layer |
 | Email sending (use case) | `ez-php/mail` |
 | Priority queues | Future driver extension or application layer |

@@ -6,6 +6,7 @@ namespace EzPhp\Queue;
 
 use EzPhp\Contracts\JobInterface;
 use EzPhp\Contracts\QueueInterface;
+use EzPhp\Queue\Lock\JobLockInterface;
 
 /**
  * Class Worker
@@ -28,6 +29,16 @@ use EzPhp\Contracts\QueueInterface;
  * retrieve counters for processed (success), retried, and permanently failed
  * jobs accumulated during that run. Stats are reset at the start of each
  * work() call.
+ *
+ * **Middleware:** a `Job` may return middleware from `middleware()`; they wrap
+ * `handle()` in order. A middleware that calls `Job::releaseAfter()` and skips
+ * `$next` gets the job re-queued after the delay without consuming an attempt.
+ * Released jobs are not counted in getStats().
+ *
+ * **Chains:** after a successful run the next job of a `JobChain` is pushed.
+ *
+ * **Unique jobs:** pass the `JobLockInterface` that `UniqueQueue` uses and the
+ * Worker frees a `ShouldBeUnique` job's lock when it succeeded or failed for good.
  *
  * @package EzPhp\Queue
  */
@@ -57,10 +68,13 @@ final class Worker
     /**
      * Worker Constructor
      *
-     * @param QueueInterface $queue
+     * @param QueueInterface        $queue
+     * @param JobLockInterface|null $locks Lock store shared with UniqueQueue; null disables unique-lock release.
      */
-    public function __construct(private readonly QueueInterface $queue)
-    {
+    public function __construct(
+        private readonly QueueInterface $queue,
+        private readonly ?JobLockInterface $locks = null,
+    ) {
     }
 
     /**
@@ -177,10 +191,24 @@ final class Worker
             );
         }
 
+        $succeeded = false;
+
         try {
             $job->incrementAttempts();
-            $job->handle();
+            $this->runThroughMiddleware($job);
+
+            if ($job instanceof Job) {
+                $releaseDelay = $job->pullReleaseDelay();
+
+                if ($releaseDelay !== null) {
+                    $this->queue->push($job->withRelease($releaseDelay));
+
+                    return;
+                }
+            }
+
             $this->processed++;
+            $succeeded = true;
         } catch (\Throwable $e) {
             $job->fail($e);
 
@@ -193,7 +221,56 @@ final class Worker
             } else {
                 $this->queue->failed($job, $e);
                 $this->failed++;
+                $this->releaseUniqueLock($job);
             }
+        }
+
+        if ($succeeded) {
+            $this->releaseUniqueLock($job);
+
+            $next = $job instanceof Job ? $job->nextInChain() : null;
+
+            if ($next !== null) {
+                $this->queue->push($next);
+            }
+        }
+    }
+
+    /**
+     * Run handle() inside the job's middleware, outermost middleware first.
+     *
+     * @param JobInterface $job
+     *
+     * @return void
+     */
+    private function runThroughMiddleware(JobInterface $job): void
+    {
+        $pipeline = static function (JobInterface $j): void {
+            $j->handle();
+        };
+
+        $middleware = $job instanceof Job ? $job->middleware() : [];
+
+        foreach (array_reverse($middleware) as $layer) {
+            $pipeline = static function (JobInterface $j) use ($layer, $pipeline): void {
+                $layer->handle($j, $pipeline);
+            };
+        }
+
+        $pipeline($job);
+    }
+
+    /**
+     * Free the uniqueness lock of a finished ShouldBeUnique job.
+     *
+     * @param JobInterface $job
+     *
+     * @return void
+     */
+    private function releaseUniqueLock(JobInterface $job): void
+    {
+        if ($this->locks !== null && $job instanceof ShouldBeUnique) {
+            $this->locks->release(UniqueQueue::lockKey($job));
         }
     }
 }

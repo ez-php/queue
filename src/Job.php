@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EzPhp\Queue;
 
 use EzPhp\Contracts\JobInterface;
+use EzPhp\Queue\Middleware\JobMiddlewareInterface;
 
 /**
  * Class Job
@@ -67,6 +68,28 @@ abstract class Job implements JobInterface
     private int $attempts = 0;
 
     /**
+     * Delay requested by a middleware via releaseAfter(); null when the job was not released.
+     *
+     * @var int|null
+     */
+    private ?int $releaseDelay = null;
+
+    /**
+     * True on copies the Worker re-pushes after a retry or release, so `UniqueQueue`
+     * does not treat them as fresh dispatches.
+     *
+     * @var bool
+     */
+    private bool $requeued = false;
+
+    /**
+     * Jobs to push, one after another, once this job succeeded. See JobChain.
+     *
+     * @var list<Job>
+     */
+    private array $chain = [];
+
+    /**
      * Called when the job throws an exception during execution.
      *
      * No-op by default — override in subclasses to send notifications or
@@ -78,6 +101,109 @@ abstract class Job implements JobInterface
      */
     public function fail(\Throwable $exception): void
     {
+    }
+
+    /**
+     * Middleware wrapped around handle(), outermost first. Empty by default.
+     *
+     * Override to add cross-cutting behaviour such as WithoutOverlapping or
+     * RateLimited. Called on every execution, so the instances are never
+     * serialized with the job.
+     *
+     * @return list<JobMiddlewareInterface>
+     */
+    public function middleware(): array
+    {
+        return [];
+    }
+
+    /**
+     * Ask the Worker to put this job back on the queue instead of counting it as
+     * processed. Meant for middleware that decides not to run the job right now;
+     * the release does not consume one of the job's attempts.
+     *
+     * @param int $seconds Delay before the job becomes available again.
+     *
+     * @return void
+     */
+    public function releaseAfter(int $seconds = 0): void
+    {
+        $this->releaseDelay = max(0, $seconds);
+    }
+
+    /**
+     * Return and clear the delay requested via releaseAfter().
+     *
+     * @internal Called by Worker after the middleware pipeline; not part of the public job API.
+     *
+     * @return int|null Null when the job was not released.
+     */
+    public function pullReleaseDelay(): ?int
+    {
+        $delay = $this->releaseDelay;
+        $this->releaseDelay = null;
+
+        return $delay;
+    }
+
+    /**
+     * Return a copy that gives the released attempt back and is delayed by $delay.
+     *
+     * @internal Called by Worker when re-queuing a released job; not part of the public job API.
+     *
+     * @param int $delay
+     *
+     * @return static
+     */
+    public function withRelease(int $delay): static
+    {
+        $clone = $this->withDelay($delay);
+        $clone->attempts = max(0, $clone->attempts - 1);
+
+        return $clone;
+    }
+
+    /**
+     * Return a copy that runs the given jobs, in order, after it succeeds.
+     *
+     * @param list<Job> $jobs
+     *
+     * @return static
+     */
+    public function withChain(array $jobs): static
+    {
+        $clone = clone $this;
+        $clone->chain = $jobs;
+
+        return $clone;
+    }
+
+    /**
+     * The job to push after this one succeeded, carrying the rest of the chain.
+     *
+     * @internal Called by Worker after a successful run; not part of the public job API.
+     *
+     * @return Job|null Null when no chain is attached or it is exhausted.
+     */
+    public function nextInChain(): ?Job
+    {
+        if ($this->chain === []) {
+            return null;
+        }
+
+        $next = $this->chain[0];
+
+        return $next->withChain([...array_slice($this->chain, 1), ...$next->chain]);
+    }
+
+    /**
+     * @internal Read by UniqueQueue; not part of the public job API.
+     *
+     * @return bool
+     */
+    public function isRequeued(): bool
+    {
+        return $this->requeued;
     }
 
     /**
@@ -164,6 +290,7 @@ abstract class Job implements JobInterface
     {
         $clone = clone $this;
         $clone->delay = $delay;
+        $clone->requeued = true;
 
         return $clone;
     }
