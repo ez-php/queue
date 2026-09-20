@@ -33,11 +33,11 @@ Add `config/queue.php` to your application:
 
 ```php
 return [
-    'driver' => env('QUEUE_DRIVER', 'database'),  // 'database' | 'redis'
+    'driver' => getenv('QUEUE_DRIVER') ?: 'database',  // 'database' | 'redis'
     'redis'  => [
-        'host'     => env('REDIS_HOST', '127.0.0.1'),
-        'port'     => (int) env('REDIS_PORT', 6379),
-        'database' => (int) env('REDIS_DATABASE', 0),
+        'host'     => getenv('REDIS_HOST') ?: '127.0.0.1',
+        'port'     => (int) (getenv('REDIS_PORT') ?: 6379),
+        'database' => (int) (getenv('REDIS_DATABASE') ?: 0),
     ],
 ];
 ```
