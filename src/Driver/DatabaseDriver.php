@@ -17,8 +17,10 @@ use PDO;
  * failed jobs in a `failed_jobs` table. Both tables are created automatically
  * if they do not exist (CREATE TABLE IF NOT EXISTS).
  *
- * pop() is atomic: it selects the oldest available job and deletes it within a
- * single transaction so that concurrent workers cannot pick the same job.
+ * pop() is atomic: it selects the oldest available job (locking the row with
+ * `FOR UPDATE SKIP LOCKED` on MySQL) and deletes it within a single transaction,
+ * and only returns the job when the DELETE actually removed the row, so concurrent
+ * workers cannot pick the same job.
  *
  * Supports delayed jobs via the available_at column: a job with delay > 0 is
  * not returned by pop() until available_at <= NOW().
@@ -83,31 +85,46 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
      */
     public function pop(string $queue = 'default'): ?JobInterface
     {
-        $this->pdo->beginTransaction();
+        // On MySQL the candidate row is locked (`FOR UPDATE SKIP LOCKED`) so concurrent
+        // workers never read the same job. SQLite serialises writers itself and has no
+        // row locks. In both cases the DELETE must affect a row: if it did not, another
+        // worker claimed the job first and the next candidate is tried.
+        $lock = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? '' : ' FOR UPDATE SKIP LOCKED';
 
-        try {
-            $stmt = $this->pdo->prepare(
-                'SELECT id, payload FROM jobs
-                 WHERE queue = ? AND available_at <= ?
-                 ORDER BY available_at ASC, id ASC
-                 LIMIT 1'
-            );
-            $stmt->execute([$queue, time()]);
+        do {
+            $this->pdo->beginTransaction();
 
-            /** @var array{id: int|string, payload: string}|false $row */
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            try {
+                $stmt = $this->pdo->prepare(
+                    'SELECT id, payload FROM jobs
+                     WHERE queue = ? AND available_at <= ?
+                     ORDER BY available_at ASC, id ASC
+                     LIMIT 1' . $lock
+                );
+                $stmt->execute([$queue, time()]);
 
-            if ($row === false) {
+                /** @var array{id: int|string, payload: string}|false $row */
+                $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if ($row === false) {
+                    $this->pdo->rollBack();
+                    return null;
+                }
+
+                $delete = $this->pdo->prepare('DELETE FROM jobs WHERE id = ?');
+                $delete->execute([$row['id']]);
+                $claimed = $delete->rowCount() > 0;
+
+                if ($claimed) {
+                    $this->pdo->commit();
+                } else {
+                    $this->pdo->rollBack();
+                }
+            } catch (\Throwable $e) {
                 $this->pdo->rollBack();
-                return null;
+                throw new QueueException('Failed to pop job from database queue: ' . $e->getMessage(), 0, $e);
             }
-
-            $this->pdo->prepare('DELETE FROM jobs WHERE id = ?')->execute([$row['id']]);
-            $this->pdo->commit();
-        } catch (\Throwable $e) {
-            $this->pdo->rollBack();
-            throw new QueueException('Failed to pop job from database queue: ' . $e->getMessage(), 0, $e);
-        }
+        } while (!$claimed);
 
         $envelope = json_decode($row['payload'], true, 512, JSON_THROW_ON_ERROR);
 
@@ -289,6 +306,9 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
                     available_at INTEGER NOT NULL,
                     created_at  INTEGER NOT NULL
                 )'
+            );
+            $this->pdo->exec(
+                'CREATE INDEX IF NOT EXISTS jobs_queue_available_idx ON jobs (queue, available_at)'
             );
             $this->pdo->exec(
                 'CREATE TABLE IF NOT EXISTS failed_jobs (

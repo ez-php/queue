@@ -31,6 +31,29 @@ final class DatabaseTestJob extends Job
     }
 }
 
+/**
+ * Statement whose DELETE reports zero affected rows a configurable number of times.
+ */
+final class LosingDeleteStatement extends PDOStatement
+{
+    public static int $losses = 0;
+
+    protected function __construct()
+    {
+    }
+
+    public function rowCount(): int
+    {
+        if (self::$losses > 0 && str_starts_with($this->queryString, 'DELETE')) {
+            self::$losses--;
+
+            return 0;
+        }
+
+        return parent::rowCount();
+    }
+}
+
 #[CoversClass(DatabaseDriver::class)]
 #[UsesClass(Job::class)]
 #[UsesClass(QueueException::class)]
@@ -73,6 +96,30 @@ final class DatabaseDriverTest extends TestCase
 
         $this->assertContains('jobs', $result);
         $this->assertContains('failed_jobs', $result);
+    }
+
+    public function testPopRetriesWhenAnotherWorkerClaimedTheRowFirst(): void
+    {
+        $this->driver->push($this->makeJob());
+
+        // Simulates a lost race: the first DELETE reports 0 affected rows, as if another
+        // worker had already removed the row. pop() must roll back and try again.
+        LosingDeleteStatement::$losses = 1;
+        $this->pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS, [LosingDeleteStatement::class]);
+
+        $job = $this->driver->pop();
+
+        $this->assertInstanceOf(Job::class, $job);
+        $this->assertSame(0, LosingDeleteStatement::$losses);
+        $this->assertSame(0, $this->driver->size());
+    }
+
+    public function testQueueIndexIsCreated(): void
+    {
+        $result = $this->pdoQuery("SELECT name FROM sqlite_master WHERE type='index'")
+            ->fetchAll(PDO::FETCH_COLUMN);
+
+        $this->assertContains('jobs_queue_available_idx', $result);
     }
 
     public function testPushInsertsRow(): void
