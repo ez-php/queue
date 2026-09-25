@@ -85,7 +85,7 @@ final class ProcessReport extends Job
 }
 ```
 
-> **Note:** The Redis driver does not enforce `$delay`. Use the database driver for delayed job delivery.
+Every driver honours `$delay` (the Redis driver holds delayed jobs in a sorted set until they are due).
 
 ## Job middleware
 
@@ -101,7 +101,7 @@ public function middleware(): array
 }
 ```
 
-A middleware that does not want the job to run now calls `$job->releaseAfter($seconds)` and returns without calling `$next`; the Worker puts the job back with that delay **without consuming an attempt**. Write your own by implementing `Middleware\JobMiddlewareInterface`.
+A middleware that does not want the job to run now calls `$job->releaseAfter($seconds)` and returns without calling `$next`; the Worker puts the job back with that delay (at least 1 second, so a still-blocked job cannot spin) **without consuming an attempt**. Write your own by implementing `Middleware\JobMiddlewareInterface`.
 
 `WithoutOverlapping` and `UniqueQueue` need a `Lock\JobLockInterface`: `InMemoryJobLock` (tests / single process) or `CacheJobLock` (needs `ez-php/cache`; use a shared store such as Redis or File). `RateLimited` needs `ez-php/rate-limiter`.
 
@@ -145,7 +145,7 @@ Supports delayed delivery via `available_at` column.
 
 Uses `ext-redis`. Jobs are pushed to `queues:{name}` (RPUSH) and consumed via LPOP (FIFO). Failed jobs are appended to `queues:failed:{name}`.
 
-Delayed delivery is **not** enforced — jobs are queued immediately regardless of `$delay`.
+Delayed jobs (`$delay > 0`, including jobs released by middleware or re-queued for a retry) wait in the sorted set `queues:delayed:{name}`, scored by the time they become available; each `pop()` first moves due jobs onto the list in one atomic Lua script. `size()` counts jobs available now (ready plus due), like the other drivers.
 
 ### InMemory Driver (tests only)
 
@@ -164,7 +164,7 @@ $queue->failedJobs();    // [] — assert on failures in tests
 $queue->flush();         // reset between tests
 ```
 
-- Honours `$queue` and `$delay`, matching the database driver (the Redis driver ignores `$delay`).
+- Honours `$queue` and `$delay`, matching the database and Redis drivers.
 - Jobs are serialized on push just like the persistent drivers, so a job that cannot be
   serialized fails here too instead of passing tests and breaking in production.
 - Does **not** implement `FailedJobRepositoryInterface`, so `queue:failed` is unavailable —

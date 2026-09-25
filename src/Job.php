@@ -122,7 +122,9 @@ abstract class Job implements JobInterface
      * processed. Meant for middleware that decides not to run the job right now;
      * the release does not consume one of the job's attempts.
      *
-     * @param int $seconds Delay before the job becomes available again.
+     * @param int $seconds Delay before the job becomes available again. The Worker
+     *                     re-queues with at least 1 second, so 0 cannot busy-loop a
+     *                     job that is still blocked.
      *
      * @return void
      */

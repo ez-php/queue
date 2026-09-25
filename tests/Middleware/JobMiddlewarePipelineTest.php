@@ -89,6 +89,21 @@ final class JobMiddlewarePipelineTest extends TestCase
         $this->assertSame(['processed' => 0, 'retried' => 0, 'failed' => 0], $worker->getStats());
     }
 
+    public function testZeroSecondReleaseIsPushedBackWithAtLeastOneSecondDelay(): void
+    {
+        // releaseAfter(0) would make a still-blocked job immediately available again,
+        // so the Worker would pop it straight back in a tight loop on every driver.
+        $queue = new QueueMwCapturingQueue();
+        $queue->seed(new QueueMwZeroReleasedJob());
+        $worker = new Worker($queue);
+
+        $worker->runNextJob();
+
+        $this->assertCount(1, $queue->pushed);
+        $this->assertSame(1, $queue->pushed[0]->getDelay());
+        $this->assertSame(0, $queue->pushed[0]->getAttempts());
+    }
+
     public function testReleaseRequestIsClearedAfterPushing(): void
     {
         $job = new QueueMwReleasedJob();

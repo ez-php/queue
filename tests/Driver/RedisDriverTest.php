@@ -34,6 +34,8 @@ final class RedisDriverTest extends TestCase
 {
     private RedisDriver $driver;
 
+    private \Redis $redis;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -50,6 +52,11 @@ final class RedisDriverTest extends TestCase
         } catch (\Throwable) {
             $this->markTestSkipped("Redis is not available at {$host}:{$port}.");
         }
+
+        $this->redis = new \Redis();
+        $this->redis->connect($host, $port);
+        $this->redis->select(1);
+        $this->redis->del('queues:delayed:default', 'queues:delayed:emails', 'queues:delayed:critical');
         // Flush only our test keys via pop-until-null
         while ($this->driver->pop('default') !== null) {
         }
@@ -156,5 +163,60 @@ final class RedisDriverTest extends TestCase
 
         $this->assertNotNull($popped);
         $this->assertSame(2, $popped->getAttempts());
+    }
+
+    public function testDelayedJobIsNotPoppedBeforeItIsDue(): void
+    {
+        $this->driver->push($this->makeJob()->withDelay(300));
+
+        $this->assertNull($this->driver->pop(), 'A delayed job must not be available immediately');
+        $this->assertSame(0, $this->driver->size(), 'size() counts only jobs available now');
+    }
+
+    public function testDelayedJobIsPoppedOnceDue(): void
+    {
+        $this->driver->push($this->makeJob()->withDelay(300));
+        $this->makeDelayedJobsDue('default');
+
+        $popped = $this->driver->pop();
+
+        $this->assertInstanceOf(RedisTestJob::class, $popped);
+        $this->assertNull($this->driver->pop());
+        $this->assertSame(0, (int) $this->redis->zCard('queues:delayed:default'));
+    }
+
+    public function testIdenticalDelayedJobsAreNotMerged(): void
+    {
+        $this->driver->push($this->makeJob()->withDelay(300));
+        $this->driver->push($this->makeJob()->withDelay(300));
+        $this->makeDelayedJobsDue('default');
+
+        $this->assertSame(2, $this->driver->size());
+        $this->assertNotNull($this->driver->pop());
+        $this->assertNotNull($this->driver->pop());
+        $this->assertNull($this->driver->pop());
+    }
+
+    public function testReleasedJobIsNotImmediatelyPoppedAgain(): void
+    {
+        // What the Worker does for RateLimited / WithoutOverlapping: re-push with a release delay.
+        $this->driver->push($this->makeJob()->withRelease(30));
+
+        $this->assertNull($this->driver->pop(), 'A released job must wait out its delay instead of looping');
+    }
+
+    /**
+     * Move every delayed job of a queue into the past so the next pop() treats it as due.
+     */
+    private function makeDelayedJobsDue(string $queue): void
+    {
+        $key = 'queues:delayed:' . $queue;
+
+        /** @var list<string> $members */
+        $members = $this->redis->zRange($key, 0, -1);
+
+        foreach ($members as $member) {
+            $this->redis->zAdd($key, time() - 1, $member);
+        }
     }
 }

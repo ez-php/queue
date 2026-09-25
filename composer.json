@@ -28,9 +28,11 @@
         "php": "^8.5",
         "ext-pdo": "*",
         "ez-php/contracts": "^2.0",
-        "ez-php/console": "^2.0"
+        "ez-php/console": "^2.0",
+        "ez-php/support": "^2.0"
     },
     "suggest": {
+        "ext-redis": "Needed for Driver\\RedisDriver",
         "ez-php/cache": "Needed for Lock\\CacheJobLock (WithoutOverlapping / ShouldBeUnique across processes)",
         "ez-php/rate-limiter": "Needed for Middleware\\RateLimited"
     },

@@ -201,7 +201,10 @@ final class Worker
                 $releaseDelay = $job->pullReleaseDelay();
 
                 if ($releaseDelay !== null) {
-                    $this->queue->push($job->withRelease($releaseDelay));
+                    // At least 1 s: a job released with 0 s becomes available at once, and
+                    // if whatever blocked it (lock, rate limit) still holds, the Worker would
+                    // pop it straight back in a tight loop.
+                    $this->queue->push($job->withRelease(max(1, $releaseDelay)));
 
                     return;
                 }

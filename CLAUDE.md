@@ -241,7 +241,7 @@ Only set a port for services the module actually uses. Modules without external 
 
 > The `MEILISEARCH_PORT` column is the **host** port. Inside a Compose network the service is always reachable at `http://meilisearch:7700` regardless of the host mapping — only publish-side ports need to be unique.
 
-> The "Redis host port" column is likewise the **host**-published port. `ez-php/cache`, `ez-php/queue`, and `ez-php/rate-limiter` map it through a separate `REDIS_HOST_PORT` env var in `docker-compose.yml`, keeping `REDIS_PORT` fixed at `6379` for in-container connections (the app container always reaches Redis at `redis:6379` over the Compose network, regardless of the host mapping) — the root project and the `ez-php/` application template are the two exceptions, since both have no host/container split and use `REDIS_PORT` for both (the template's other in-container Redis settings — `CACHE_REDIS_PORT`, `QUEUE_REDIS_PORT`, `RATE_LIMITER_REDIS_PORT` — stay fixed at `6379` regardless, same as every other module).
+> The "Redis host port" column is likewise the **host**-published port. `ez-php/cache`, `ez-php/queue`, and `ez-php/rate-limiter` map it through a separate `REDIS_HOST_PORT` env var in `docker-compose.yml`, keeping `REDIS_PORT` fixed at `6379` for in-container connections (the app container always reaches Redis at `redis:6379` over the Compose network, regardless of the host mapping) — the root project and the `ez-php/` application template are the two exceptions, since both have no host/container split and use `REDIS_PORT` for both (the template's other in-container Redis settings — `CACHE_REDIS_PORT`, `QUEUE_REDIS_PORT`, `RATE_LIMITER_REDIS_PORT`, `HEALTH_REDIS_PORT` — stay fixed at `6379` regardless, same as every other module).
 
 > This table tracks only MySQL, Redis, and Meilisearch ports — the three services shared across multiple modules where a collision is otherwise easy to introduce. Mailpit is the one other service with published host ports: SMTP `1025` and web UI `8025`. `ez-php/mail` maps them through `MAILPIT_SMTP_HOST_PORT`/`MAILPIT_API_HOST_PORT` in `modules/mail/docker-compose.yml` (mirroring the `*_HOST_PORT` pattern above, documented in `modules/mail/.env.example`); the root project and the `ez-php/` template each run their own Mailpit on the same defaults (`MAIL_PORT`/`MAIL_WEB_PORT`), so **these three stacks cannot run at the same time** without overriding those variables. It isn't a table column because no module beyond those three runs Mailpit — but a new module adding its own single-use service's ports should likewise parameterize them and document the defaults in its own `.env.example` rather than adding a column here.
 
@@ -282,7 +282,7 @@ src/
 │   └── CacheJobLock.php            — ez-php/cache-backed lock (soft dependency), shared between web and worker processes
 ├── Driver/
 │   ├── DatabaseDriver.php          — PDO-backed driver; atomic pop via transaction; supports delayed delivery; implements FailedJobRepositoryInterface
-│   ├── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; no delay enforcement
+│   ├── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; delayed jobs in a sorted set, moved when due
 │   └── InMemoryDriver.php          — in-process driver for tests; honours queue + delay; no infrastructure
 ├── Scheduling/
 │   ├── Scheduler.php               — Registry of recurring jobs; evaluates due tasks by cron expression
@@ -306,7 +306,7 @@ tests/
 ├── Driver/
 │   ├── DatabaseDriverTest.php      — Covers DatabaseDriver against SQLite :memory: (no MySQL needed)
 │   ├── QueueJobPayloadRoundTripTest.php — Push/pop of a job with nested objects, an enum and a chain through all three drivers; failed-job retry
-│   └── RedisDriverTest.php         — Covers RedisDriver; skipped when ext-redis is unavailable
+│   └── RedisDriverTest.php         — Covers RedisDriver incl. delayed/released jobs; skipped when ext-redis is unavailable
 ├── Scheduling/
 │   ├── ScheduledTaskTest.php       — Covers ScheduledTask: cron/daily/hourly/everyMinutes, isDue()
 │   └── SchedulerTest.php           — Covers Scheduler: task registration, dueNow(), job class resolution
@@ -373,12 +373,12 @@ PDO-backed driver. Auto-creates `jobs` and `failed_jobs` tables (driver-aware DD
 
 ext-redis driver. Queues are Redis lists (`queues:{name}`). Failed jobs go to `queues:failed:{name}`.
 
-- `push()`: RPUSH — appends to tail
-- `pop()`: LPOP — removes from head (FIFO)
-- `size()`: LLEN
+- `push()`: RPUSH — appends to tail; a job with `$delay > 0` is instead `ZADD`ed to `queues:delayed:{name}` (score = available-at time)
+- `pop()`: moves due delayed jobs onto the list (atomic Lua script), then LPOP — removes from head (FIFO)
+- `size()`: LLEN + due members of the delayed set (jobs available now)
 - `failed()`: RPUSH to `queues:failed:{name}` with a serialised `[job, exception, trace, failed_at]` array
 
-**Delay:** The `$delay` property is ignored. Jobs are always pushed immediately. Use `DatabaseDriver` if deferred delivery is required.
+**Delay:** honoured — see Design Decisions ("RedisDriver honours `$delay` via a sorted set").
 
 ---
 
@@ -473,7 +473,7 @@ $scheduler->job(SyncData::class)->everyMinutes(15);
 $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 ```
 
-`ScheduledTask` is a fluent builder that stores the job class and its cron expression. `isDue(\DateTimeImmutable)` checks whether the expression matches the given time.
+`ScheduledTask` is a fluent builder that stores the job class and its cron expression. `isDue(\DateTimeImmutable)` checks whether the expression matches the given time, via `ez-php/support`'s `CronExpression::isDue()` — the same matcher `ez-php/scheduler` uses, instead of a private copy of it (supports `*`, `N`, `*/N`; a malformed expression is never due).
 
 `ScheduleRunCommand` (`queue:schedule`) calls `$scheduler->dueNow()` and pushes each due job onto the queue. Run from a system cron every minute: `* * * * * php ez queue:schedule`.
 
@@ -484,15 +484,15 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 - **`pop()` deletes immediately (pop-and-delete)** — The database driver atomically SELECTs and DELETEs in one transaction. This means a worker crash between pop and handle loses the job. The trade-off is simplicity: no reserved_at column, no heartbeat, no stuck-job cleanup daemon. Retry is handled at the application level by re-pushing on failure.
 - **Job state is serialised with `serialize()`** — The whole job object, including `$attempts`, is PHP-serialised. This makes re-queueing after failure trivial: push the same object back. The downside is PHP-only portability. JSON-based payloads are a future option but require jobs to implement a toArray/fromArray contract.
 - **Auto-created tables in DatabaseDriver** — `CREATE TABLE IF NOT EXISTS` runs in the constructor. This is intentional for ease of use in development and testing. In production, users can also create the tables via their migration system using the DDL shown in the README.
-- **RedisDriver ignores `$delay`** — Redis lists have no native deferred-delivery mechanism without sorted sets + a polling daemon. Adding that complexity to a v1 driver is premature. The `$delay` property is preserved on the job object (serialised), so switching to `DatabaseDriver` later respects whatever delay was configured.
+- **RedisDriver honours `$delay` via a sorted set, without a daemon** — Delayed jobs are `ZADD`ed to `queues:delayed:{name}` (score = available-at Unix time); every `pop()` first runs one Lua script that moves up to 100 due members onto the `queues:{name}` list, so the move is atomic across concurrent workers and needs no separate polling process. Each delayed member gets a random `id` in its JSON envelope because sorted-set members are unique — two byte-identical jobs would otherwise merge into one. This is required, not optional: the Worker re-pushes released jobs (`RateLimited`, `WithoutOverlapping` → `releaseAfter()`) and retries with their delay, and a driver that ignored delays would pop them straight back in a tight loop.
 - **Commands are auto-registered through `CommandRegistryInterface`, not `Application`** — `boot()` checks `$this->app instanceof CommandRegistryInterface` (an `ez-php/contracts` interface) before calling `registerCommand()`, so the module never imports the concrete `Application` class and stays usable with a plain `ContainerInterface`.
 - **The storage envelope lists every class in the payload** — `JobSerializer` records all `O:`/`C:`/`E:` class names found in the serialized job and `pop()` passes exactly that list to `allowed_classes`. `allowed_classes` applies to every nested object, so restricting it to the top-level job class turned a `Mailable`, `PushMessage`, event or chained job into `__PHP_Incomplete_Class` (a `TypeError` on typed properties). The list is stored next to the payload, so it limits instantiation to what was pushed but does not protect against an attacker who can write queue rows — queue storage must only be written by `push()`/`failed()`. Envelopes without a `classes` key (written before this change) fall back to the top-level class.
 - **`failed()` is on the interface** — Driver-specific failure stores (DB table vs Redis list) require the interface to expose a `failed()` method. The alternative (casting to a driver-specific interface in the Worker) would couple the Worker to concrete drivers.
 - **`InMemoryDriver` serializes jobs even though it holds them in memory** — Storing the object by reference would be faster, but a job that cannot be serialized would then pass its tests against the in-memory driver and fail only against `DatabaseDriver`/`RedisDriver` in production. Round-tripping through `serialize()`/`unserialize()` makes the test double reproduce the real constraint, and means a popped job is a copy rather than the pushed instance.
-- **`InMemoryDriver` honours `$delay`, unlike `RedisDriver`** — It stores an `available_at` timestamp per entry, matching `DatabaseDriver`. A test double that ignored delay would let delay-dependent code pass here and break against the database driver.
+- **`InMemoryDriver` honours `$delay`, like the other drivers** — It stores an `available_at` timestamp per entry, matching `DatabaseDriver`. A test double that ignored delay would let delay-dependent code pass here and break against the database driver.
 - **`InMemoryDriver` does not implement `FailedJobRepositoryInterface`** — Failures are recorded in an array and exposed via `failedJobs()` for assertions. Implementing the repository contract would imply `queue:failed` support (retry/forget/flush across processes), which an in-process store cannot honestly provide. Resolving `FailedJobRepositoryInterface` with the memory driver active throws, exactly as it does with Redis.
 - **Job middleware wraps `handle()` inside the `Worker`, not at dispatch.** `Job::middleware()` returns fresh middleware instances on every execution (they are never serialized with the job, which is why locks/limiters are passed in from the job's own `middleware()` method). Only `Job` subclasses get middleware; a bare `JobInterface` implementation runs without.
-- **A middleware skips a job by calling `Job::releaseAfter($seconds)` and not calling `$next`.** The Worker then re-pushes a copy with that delay and gives the attempt back (`Job::withRelease()`), so waiting for a lock never exhausts `maxTries`. Released jobs are deliberately not counted in `Worker::getStats()` — its array shape is public API. A middleware that skips *without* releasing leaves the job counted as processed.
+- **A middleware skips a job by calling `Job::releaseAfter($seconds)` and not calling `$next`.** The Worker then re-pushes a copy with that delay — floored at 1 second, because a 0-second release makes a still-blocked job available at once and the Worker would pop it straight back in a tight loop — and gives the attempt back (`Job::withRelease()`), so waiting for a lock never exhausts `maxTries`. Released jobs are deliberately not counted in `Worker::getStats()` — its array shape is public API. A middleware that skips *without* releasing leaves the job counted as processed.
 - **`ez-php/cache` and `ez-php/rate-limiter` are soft dependencies (`require-dev` + `suggest`).** `Lock\CacheJobLock` and `Middleware\RateLimited` reference them; PSR-4 only loads those classes when an application uses them, so `ez-php/queue` itself stays free of both. `JobLockInterface` is owned by this module so the core pipeline never imports cache types.
 - **Unique jobs lock on push, release in the Worker.** `UniqueQueue` (decorator) takes the lock; the `Worker` (given the same `JobLockInterface`, auto-injected by `QueueServiceProvider` when the interface is bound) releases it once the job succeeded or failed permanently. The lock is intentionally kept across retries and releases: copies the Worker re-pushes are recognised via `Job::isRequeued()`/`getAttempts()` and bypass the lock. `uniqueFor()` is the TTL safety net if a job is lost. Wrapping is opt-in and manual — the provider does not wrap `QueueInterface` itself, because a wrapper would break the `FailedJobRepositoryInterface` `instanceof` check behind `queue:failed`.
 - **Chains travel inside the serialized payload.** `JobChain::dispatch()` pushes only the first job; the remaining jobs are a private `list<Job>` on it (`Job::withChain()`), so every driver works unchanged and no extra table is needed. The Worker pushes `Job::nextInChain()` after a successful run; a permanently failed job drops the rest of the chain (no failure callbacks, no batches/progress UI — deliberately out of scope). Chain steps must extend `Job`.
@@ -500,12 +500,12 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 - **`Scheduling\Scheduler` has no overlap prevention, unlike `ez-php/scheduler`.** Two overlapping `queue:schedule` cron ticks can both match the same due `ScheduledTask` and push its job twice — nothing here dedups within a matching minute. This is intentional scope, not an oversight: adding mutex support would duplicate `ez-php/scheduler`'s `MutexInterface`/driver design rather than reuse it, and the two schedulers' data models (job-class-based here vs. console-command-based there) are different enough that merging them would be a real package merge. Applications that need overlap prevention run `queue:schedule` through `ez-php/scheduler`'s mutex-guarded executor instead of cron directly — documented in `modules/scheduler/README.md` § "Reconciling with `ez-php/queue`'s own scheduler" and this package's own README § "Scheduling". No code dependency between the two packages either way.
 
 ---
-- **`ez-php/framework` is a `require-dev` dependency only.** Nothing in `src/` imports a framework class — the module needs `ez-php/contracts` (`ServiceProvider`, `QueueInterface`, …) and `ez-php/console` (commands); the framework is only needed by the test suite (`ez-php/testing-application`). Declaring it in `require` would force the whole kernel onto anything that installs the queue.
+- **`ez-php/framework` is a `require-dev` dependency only.** Nothing in `src/` imports a framework class — the module needs `ez-php/contracts` (`ServiceProvider`, `QueueInterface`, …), `ez-php/console` (commands) and `ez-php/support` (`CronExpression`, zero dependencies); the framework is only needed by the test suite (`ez-php/testing-application`). Declaring it in `require` would force the whole kernel onto anything that installs the queue.
 
 ## Testing Approach
 
 - **`DatabaseDriverTest`** — Uses SQLite `:memory:` via plain `PDO`. No MySQL or Docker required. All driver behaviour (push, pop, delay, failed_jobs, serialization) is covered.
-- **`RedisDriverTest`** — Requires a live Redis instance (available in Docker). Tests are skipped automatically if `ext-redis` is not loaded. Uses Redis database `1` to avoid colliding with application data.
+- **`RedisDriverTest`** — Requires a live Redis instance (available in Docker). Tests are skipped automatically if `ext-redis` is not loaded. Uses Redis database `1` to avoid colliding with application data, and deletes the `queues:delayed:*` sets in `setUp()` (popping only drains the lists). Delayed jobs are made due by rewriting their score, not by sleeping.
 - **`InMemoryDriverTest`** — Covers the same contract surface as `DatabaseDriverTest` with no infrastructure at all: push/pop, FIFO order, per-queue isolation, delay handling, size, failure recording, and the serialization round-trip. Uses a named job fixture — anonymous classes cannot be unserialized.
 - **`WorkerTest`** — Uses an in-memory `QueueInterface` stub (anonymous class). No external infrastructure needed. Tests cover: empty queue, success, retry on failure, permanent failure, maxJobs stopping.
 - **`WorkCommandTest`** — Uses the same in-memory stub. Output is captured via `ob_start()`. Tests cover: getName, getDescription, getHelp, handle with queue/sleep/max-jobs options.

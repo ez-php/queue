@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "1781cbbe6d3238e2c0e3bb70eae97a5a",
+    "content-hash": "abad5d2d9093b8769e41df5a20556146",
     "packages": [
         {
             "name": "ez-php/console",
@@ -178,6 +178,65 @@
                 "source": "https://github.com/ez-php/http"
             },
             "time": "2026-09-25T18:37:33+00:00"
+        },
+        {
+            "name": "ez-php/support",
+            "version": "2.5.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/ez-php/support.git",
+                "reference": "b7c2e2c439f828619022fa536fca8ed5f0ab3e89"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/ez-php/support/zipball/b7c2e2c439f828619022fa536fca8ed5f0ab3e89",
+                "reference": "b7c2e2c439f828619022fa536fca8ed5f0ab3e89",
+                "shasum": ""
+            },
+            "require": {
+                "php": "^8.5"
+            },
+            "require-dev": {
+                "ez-php/docker": "^2.0",
+                "friendsofphp/php-cs-fixer": "^3.94",
+                "phpstan/phpstan": "^2.1",
+                "phpstan/phpstan-deprecation-rules": "^2.0",
+                "phpstan/phpstan-strict-rules": "^2.0",
+                "phpunit/phpunit": "^13.0"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "EzPhp\\Support\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Andreas Uretschnig",
+                    "email": "andreas.uretschnig@gmail.com"
+                }
+            ],
+            "description": "General-purpose utility classes for the ez-php ecosystem — Range, WeightedRandom, TimeProbability, DailyQuota",
+            "homepage": "https://github.com/ez-php/support",
+            "keywords": [
+                "daily-quota",
+                "ez-php",
+                "php",
+                "range",
+                "support",
+                "time-probability",
+                "utilities",
+                "weighted-random"
+            ],
+            "support": {
+                "issues": "https://github.com/ez-php/support/issues",
+                "source": "https://github.com/ez-php/support"
+            },
+            "time": "2026-09-25T18:37:27+00:00"
         }
     ],
     "packages-dev": [

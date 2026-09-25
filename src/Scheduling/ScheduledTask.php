@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EzPhp\Queue\Scheduling;
 
 use EzPhp\Contracts\JobInterface;
+use EzPhp\Support\CronExpression;
 
 /**
  * Class ScheduledTask
@@ -182,17 +183,7 @@ final class ScheduledTask
      */
     public function isDue(\DateTimeImmutable $now): bool
     {
-        $parts = explode(' ', $this->cronExpression);
-
-        if (count($parts) !== 5) {
-            return false;
-        }
-
-        return $this->matchField($parts[0], (int) $now->format('i'))
-            && $this->matchField($parts[1], (int) $now->format('G'))
-            && $this->matchField($parts[2], (int) $now->format('j'))
-            && $this->matchField($parts[3], (int) $now->format('n'))
-            && $this->matchField($parts[4], (int) $now->format('w'));
+        return CronExpression::isDue($this->cronExpression, $now);
     }
 
     /**
@@ -235,30 +226,5 @@ final class ScheduledTask
     public function getCronExpression(): string
     {
         return $this->cronExpression;
-    }
-
-    /**
-     * Match a single cron field against the current value.
-     *
-     * Supported patterns: * (any), N (exact), *\/N (every N steps from 0).
-     *
-     * @param string $field Cron field value.
-     * @param int    $value Current calendar value.
-     *
-     * @return bool
-     */
-    private function matchField(string $field, int $value): bool
-    {
-        if ($field === '*') {
-            return true;
-        }
-
-        if (str_starts_with($field, '*/')) {
-            $n = (int) substr($field, 2);
-
-            return $n > 0 && $value % $n === 0;
-        }
-
-        return (int) $field === $value;
     }
 }

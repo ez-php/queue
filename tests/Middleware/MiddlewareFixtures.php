@@ -112,6 +112,29 @@ final class QueueMwReleasedJob extends Job
     }
 }
 
+final class QueueMwZeroReleasingMiddleware implements JobMiddlewareInterface
+{
+    public function handle(JobInterface $job, callable $next): void
+    {
+        if ($job instanceof Job) {
+            $job->releaseAfter(0);
+        }
+    }
+}
+
+final class QueueMwZeroReleasedJob extends Job
+{
+    public function handle(): void
+    {
+        QueueMwState::$log[] = 'handle';
+    }
+
+    public function middleware(): array
+    {
+        return [new QueueMwZeroReleasingMiddleware()];
+    }
+}
+
 final class QueueMwNoOverlapJob extends Job
 {
     public function handle(): void
