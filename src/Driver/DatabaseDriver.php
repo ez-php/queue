@@ -7,6 +7,7 @@ namespace EzPhp\Queue\Driver;
 use EzPhp\Contracts\JobInterface;
 use EzPhp\Contracts\QueueInterface;
 use EzPhp\Queue\FailedJobRepositoryInterface;
+use EzPhp\Queue\JobSerializer;
 use EzPhp\Queue\QueueException;
 use PDO;
 
@@ -51,13 +52,11 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
     public function push(JobInterface $job): void
     {
         try {
-            // Store the job class name alongside its serialized state so that
-            // pop() can restrict allowed_classes during deserialization, limiting
-            // the PHP object injection surface to the concrete job type only.
-            $payload = json_encode([
-                'class' => get_class($job),
-                'data' => serialize($job),
-            ], JSON_THROW_ON_ERROR);
+            // The envelope lists every class in the payload so pop() can restrict
+            // allowed_classes to exactly those — see JobSerializer.
+            $payload = json_encode(JobSerializer::serialize($job), JSON_THROW_ON_ERROR);
+        } catch (QueueException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             throw new QueueException(
                 'Job cannot be serialized: ' . $e->getMessage(),
@@ -128,28 +127,13 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
 
         $envelope = json_decode($row['payload'], true, 512, JSON_THROW_ON_ERROR);
 
-        if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
+        if (!is_array($envelope)) {
             throw new QueueException('Invalid job payload envelope.');
         }
 
-        /** @var array{class: string, data: string} $envelope */
-
-        // Restrict deserialization to the concrete job class recorded at push() time.
-        // This limits the PHP object injection surface to that one class rather than
-        // allowing arbitrary gadget chains via unrestricted unserialize().
-        // Note: allowed_classes only constrains the top-level class name — it does not
-        // validate the payload's own property values, so this is defense-in-depth against
-        // gadget-chain injection, not a guarantee against a malicious/corrupted row of that
-        // exact class. Acceptable under this driver's trust model (the `jobs` table is only
-        // ever written by push(), never by an untrusted external source).
-        /** @var mixed $job */
-        $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
-
-        if (!$job instanceof JobInterface) {
-            throw new QueueException('Deserialized payload is not a JobInterface instance.');
-        }
-
-        return $job;
+        // allowed_classes is restricted to the classes recorded at push() time.
+        // Trust model: the `jobs` table is only ever written by push() — see JobSerializer.
+        return JobSerializer::unserialize($envelope);
     }
 
     /**
@@ -175,10 +159,7 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
      */
     public function failed(JobInterface $job, \Throwable $exception): void
     {
-        $payload = json_encode([
-            'class' => get_class($job),
-            'data' => serialize($job),
-        ], JSON_THROW_ON_ERROR);
+        $payload = json_encode(JobSerializer::serialize($job), JSON_THROW_ON_ERROR);
 
         $this->pdo->prepare(
             'INSERT INTO failed_jobs (queue, payload, exception, failed_at) VALUES (?, ?, ?, ?)'
@@ -239,17 +220,13 @@ final readonly class DatabaseDriver implements QueueInterface, FailedJobReposito
 
         $envelope = json_decode($row['payload'], true, 512, JSON_THROW_ON_ERROR);
 
-        if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
+        if (!is_array($envelope)) {
             return false;
         }
 
-        /** @var array{class: string, data: string} $envelope */
-
-        // See pop()'s note on allowed_classes: same defense-in-depth limitation applies here.
-        /** @var mixed $job */
-        $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
-
-        if (!$job instanceof JobInterface) {
+        try {
+            $job = JobSerializer::unserialize($envelope);
+        } catch (QueueException) {
             return false;
         }
 

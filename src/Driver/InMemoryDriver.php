@@ -6,6 +6,7 @@ namespace EzPhp\Queue\Driver;
 
 use EzPhp\Contracts\JobInterface;
 use EzPhp\Contracts\QueueInterface;
+use EzPhp\Queue\JobSerializer;
 use EzPhp\Queue\QueueException;
 use Throwable;
 
@@ -32,7 +33,7 @@ final class InMemoryDriver implements QueueInterface
     /**
      * Queued envelopes, keyed by queue name.
      *
-     * @var array<string, list<array{class: class-string, data: string, available_at: int, seq: int}>>
+     * @var array<string, list<array{envelope: array{class: class-string, classes: list<string>, data: string}, available_at: int, seq: int}>>
      */
     private array $queues = [];
 
@@ -64,15 +65,8 @@ final class InMemoryDriver implements QueueInterface
      */
     public function push(JobInterface $job): void
     {
-        try {
-            $data = serialize($job);
-        } catch (Throwable $e) {
-            throw new QueueException('Job cannot be serialized: ' . $e->getMessage(), 0, $e);
-        }
-
         $this->queues[$job->getQueue()][] = [
-            'class' => $job::class,
-            'data' => $data,
+            'envelope' => JobSerializer::serialize($job),
             'available_at' => time() + $job->getDelay(),
             'seq' => $this->sequence++,
         ];
@@ -118,16 +112,8 @@ final class InMemoryDriver implements QueueInterface
         unset($entries[$bestIndex]);
         $this->queues[$queue] = array_values($entries);
 
-        // Restrict deserialization to the concrete class recorded at push time,
-        // mirroring DatabaseDriver's defence against gadget-chain injection.
-        /** @var mixed $job */
-        $job = unserialize($entry['data'], ['allowed_classes' => [$entry['class']]]);
-
-        if (!$job instanceof JobInterface) {
-            throw new QueueException('Deserialized payload is not a JobInterface instance.');
-        }
-
-        return $job;
+        // Same envelope and allowed_classes restriction as the persistent drivers.
+        return JobSerializer::unserialize($entry['envelope']);
     }
 
     /**

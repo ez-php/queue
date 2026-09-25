@@ -148,9 +148,11 @@ php make_module.php <name> --description="..." --services=mysql,redis
 ```
 
 `<name>` is the kebab-case package name; the namespace is derived as
-`EzPhp\<PascalCase>` unless `--namespace=` overrides it (`bignum` → `BigNum`,
-`opcache` → `OPCache`, and `dotenv` → `Env` are existing exceptions the guess
-gets wrong; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
+`EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
+overrides it. Existing exceptions the guess gets wrong: `bignum` → `BigNum`,
+`dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `oauth` → `OAuth`,
+`opcache` → `OPCache`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
+`websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
 `webauthn-metadata` → `WebauthnMetadata` and `metrics-statsd` → `MetricsStatsd` are
 intentional lower-case-word namespaces, and `testing-application` shares `EzPhp\Testing\`
 with `testing`).
@@ -170,17 +172,21 @@ stub is written only if the submodule doesn't already ship one, so
 `composer guidelines:sync` has a `# Package:` heading to anchor part 1 against.
 
 It writes `modules/<name>/` and registers the module in the four places the monorepo
-needs it — root `composer.json` (`autoload.psr-4`), `phpstan.neon`, `phpunit.xml`
-(test suite **and** coverage source), and `packages.sh` (alphabetical position).
+needs it — root `composer.json` (`autoload.psr-4` **and** the shared
+`autoload-dev` `Tests\` directory list), `phpstan.neon`, `phpunit.xml` (test suite
+**and** coverage source), and `packages.sh` (alphabetical position) — in both
+generated and `--repo` mode.
 
 Two things stay manual on purpose:
 
 - **`CLAUDE.md` part 1** — only the `# Package:` section is generated. Run
   `composer guidelines:sync` afterwards; baking a guidelines copy into the generator
   would recreate the drift the sync script exists to prevent.
-- **The host-port table below** (`--services` only) — editing it marks every
-  `CLAUDE.md` copy as drifted at once, so the next `composer full` would fail for
-  a brand-new module. The generator prints which ports to claim instead.
+- **The host-port table below** (`--services` only) — claim the "next free" row by
+  editing the table in `CODING_GUIDELINES.md` (never in a `CLAUDE.md` copy) and run
+  `composer guidelines:sync` in the same change. Editing it drifts every `CLAUDE.md`
+  until the sync runs, which is why the generator only reminds you instead of doing
+  it. Skipping the edit leaves "next free" stale, so the next module collides.
 
 ### 4 — Docker scaffold
 
@@ -265,6 +271,7 @@ src/
 ├── ShouldBeUnique.php              — Marker for jobs that must not be queued twice (uniqueId(), uniqueFor())
 ├── UniqueQueue.php                 — QueueInterface decorator: drops a duplicate ShouldBeUnique push while its lock is held
 ├── JobChain.php                    — Builder: JobChain::of($a, $b, $c)->dispatch($queue); next job is pushed after the previous succeeded
+├── JobSerializer.php               — Shared storage envelope for all drivers: records every class in the payload, restores with allowed_classes limited to that list
 ├── Middleware/
 │   ├── JobMiddlewareInterface.php  — handle(JobInterface, callable $next); wraps Job::handle() inside the Worker
 │   ├── WithoutOverlapping.php      — Execution-time mutual exclusion per key via JobLockInterface; blocked jobs are released
@@ -288,6 +295,8 @@ src/
 
 tests/
 ├── TestCase.php                    — Base PHPUnit test case
+├── JobSerializerTest.php           — Covers JobSerializer: class list (nested objects, enums, chains), legacy envelopes, malformed payloads
+├── Support/                        — QueuePayload* fixtures: a job with nested objects + an enum (one class per file for PSR-4)
 ├── JobTest.php                     — Covers Job: defaults, custom props, attempt counter, fail hook, serialization
 ├── WorkerTest.php                  — Covers Worker: runNextJob, success, retry, permanent failure, maxJobs stop
 ├── JobChainTest.php                — Covers JobChain: order, next-after-success, chain dropped on permanent failure
@@ -296,6 +305,7 @@ tests/
 ├── Middleware/                     — Pipeline order, release-without-attempt, WithoutOverlapping, RateLimited (fixtures in MiddlewareFixtures.php)
 ├── Driver/
 │   ├── DatabaseDriverTest.php      — Covers DatabaseDriver against SQLite :memory: (no MySQL needed)
+│   ├── QueueJobPayloadRoundTripTest.php — Push/pop of a job with nested objects, an enum and a chain through all three drivers; failed-job retry
 │   └── RedisDriverTest.php         — Covers RedisDriver; skipped when ext-redis is unavailable
 ├── Scheduling/
 │   ├── ScheduledTaskTest.php       — Covers ScheduledTask: cron/daily/hourly/everyMinutes, isDue()
@@ -385,7 +395,7 @@ Binds `QueueInterface` to the driver selected by `config/queue.php`:
 
 Also binds `Worker` (autowired via `QueueInterface`).
 
-`WorkCommand` is **not** auto-registered. Call `$app->registerCommand(WorkCommand::class)` before bootstrapping to add `queue:work` to the CLI.
+`boot()` auto-registers `queue:work`, `queue:failed`, `queue:monitor` and `queue:schedule` when the container implements `CommandRegistryInterface` (the ez-php `Application` does).
 
 ---
 
@@ -475,7 +485,8 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 - **Job state is serialised with `serialize()`** — The whole job object, including `$attempts`, is PHP-serialised. This makes re-queueing after failure trivial: push the same object back. The downside is PHP-only portability. JSON-based payloads are a future option but require jobs to implement a toArray/fromArray contract.
 - **Auto-created tables in DatabaseDriver** — `CREATE TABLE IF NOT EXISTS` runs in the constructor. This is intentional for ease of use in development and testing. In production, users can also create the tables via their migration system using the DDL shown in the README.
 - **RedisDriver ignores `$delay`** — Redis lists have no native deferred-delivery mechanism without sorted sets + a polling daemon. Adding that complexity to a v1 driver is premature. The `$delay` property is preserved on the job object (serialised), so switching to `DatabaseDriver` later respects whatever delay was configured.
-- **`WorkCommand` is not auto-registered** — Module service providers cannot call `$app->registerCommand()` directly (it is an `Application` method, not on `ContainerInterface`). Users register the command explicitly, keeping the module decoupled from the concrete `Application` class.
+- **Commands are auto-registered through `CommandRegistryInterface`, not `Application`** — `boot()` checks `$this->app instanceof CommandRegistryInterface` (an `ez-php/contracts` interface) before calling `registerCommand()`, so the module never imports the concrete `Application` class and stays usable with a plain `ContainerInterface`.
+- **The storage envelope lists every class in the payload** — `JobSerializer` records all `O:`/`C:`/`E:` class names found in the serialized job and `pop()` passes exactly that list to `allowed_classes`. `allowed_classes` applies to every nested object, so restricting it to the top-level job class turned a `Mailable`, `PushMessage`, event or chained job into `__PHP_Incomplete_Class` (a `TypeError` on typed properties). The list is stored next to the payload, so it limits instantiation to what was pushed but does not protect against an attacker who can write queue rows — queue storage must only be written by `push()`/`failed()`. Envelopes without a `classes` key (written before this change) fall back to the top-level class.
 - **`failed()` is on the interface** — Driver-specific failure stores (DB table vs Redis list) require the interface to expose a `failed()` method. The alternative (casting to a driver-specific interface in the Worker) would couple the Worker to concrete drivers.
 - **`InMemoryDriver` serializes jobs even though it holds them in memory** — Storing the object by reference would be faster, but a job that cannot be serialized would then pass its tests against the in-memory driver and fail only against `DatabaseDriver`/`RedisDriver` in production. Round-tripping through `serialize()`/`unserialize()` makes the test double reproduce the real constraint, and means a popped job is a copy rather than the pushed instance.
 - **`InMemoryDriver` honours `$delay`, unlike `RedisDriver`** — It stores an `available_at` timestamp per entry, matching `DatabaseDriver`. A test double that ignored delay would let delay-dependent code pass here and break against the database driver.

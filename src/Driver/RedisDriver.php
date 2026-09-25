@@ -6,6 +6,7 @@ namespace EzPhp\Queue\Driver;
 
 use EzPhp\Contracts\JobInterface;
 use EzPhp\Contracts\QueueInterface;
+use EzPhp\Queue\JobSerializer;
 use EzPhp\Queue\QueueException;
 use Redis;
 
@@ -81,12 +82,11 @@ final class RedisDriver implements QueueInterface
     public function push(JobInterface $job): void
     {
         try {
-            // Store the job class name alongside its serialized state so that
-            // pop() can restrict allowed_classes during deserialization.
-            $payload = json_encode([
-                'class' => get_class($job),
-                'data' => serialize($job),
-            ], JSON_THROW_ON_ERROR);
+            // The envelope lists every class in the payload so pop() can restrict
+            // allowed_classes to exactly those — see JobSerializer.
+            $payload = json_encode(JobSerializer::serialize($job), JSON_THROW_ON_ERROR);
+        } catch (QueueException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             throw new QueueException(
                 'Job cannot be serialized: ' . $e->getMessage(),
@@ -117,24 +117,13 @@ final class RedisDriver implements QueueInterface
 
         $envelope = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
 
-        if (!is_array($envelope) || !isset($envelope['class'], $envelope['data'])) {
+        if (!is_array($envelope)) {
             throw new QueueException('Invalid job payload envelope.');
         }
 
-        /** @var array{class: string, data: string} $envelope */
-
-        // Restrict deserialization to the concrete job class recorded at push() time.
-        // Defense-in-depth against gadget-chain injection: allowed_classes only constrains
-        // the top-level class name, not the payload's own property values. Acceptable under
-        // this driver's trust model (the queue list is only ever written by push()).
-        /** @var mixed $job */
-        $job = unserialize($envelope['data'], ['allowed_classes' => [$envelope['class']]]);
-
-        if (!$job instanceof JobInterface) {
-            throw new QueueException('Deserialized payload is not a JobInterface instance.');
-        }
-
-        return $job;
+        // allowed_classes is restricted to the classes recorded at push() time.
+        // Trust model: the queue list is only ever written by push() — see JobSerializer.
+        return JobSerializer::unserialize($envelope);
     }
 
     /**
@@ -159,9 +148,11 @@ final class RedisDriver implements QueueInterface
      */
     public function failed(JobInterface $job, \Throwable $exception): void
     {
+        $envelope = JobSerializer::serialize($job);
         $payload = json_encode([
-            'class' => get_class($job),
-            'job' => serialize($job),
+            'class' => $envelope['class'],
+            'classes' => $envelope['classes'],
+            'job' => $envelope['data'],
             'exception' => $exception->getMessage(),
             'trace' => $exception->getTraceAsString(),
             'failed_at' => date('Y-m-d H:i:s'),

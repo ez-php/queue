@@ -7,6 +7,7 @@ namespace Tests;
 use EzPhp\Contracts\CommandRegistryInterface;
 use EzPhp\Contracts\ContainerInterface;
 use EzPhp\Queue\Console\FailedCommand;
+use EzPhp\Queue\Console\MonitorCommand;
 use EzPhp\Queue\Console\ScheduleRunCommand;
 use EzPhp\Queue\Console\WorkCommand;
 use EzPhp\Queue\QueueServiceProvider;
@@ -103,6 +104,17 @@ final class QueueServiceProviderTest extends BaseTestCase
         (new QueueServiceProvider($registry))->boot();
 
         $this->assertContains(ScheduleRunCommand::class, $registry->getCommands());
+    }
+
+    /**
+     * @return void
+     */
+    public function test_boot_auto_registers_monitor_command(): void
+    {
+        $registry = $this->makeRegistry();
+        (new QueueServiceProvider($registry))->boot();
+
+        $this->assertContains(MonitorCommand::class, $registry->getCommands());
     }
 
     /**

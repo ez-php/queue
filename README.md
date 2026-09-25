@@ -24,8 +24,8 @@ Register the service provider:
 $app->register(\EzPhp\Queue\QueueServiceProvider::class);
 ```
 
-`WorkCommand` (`queue:work`), `FailedCommand` (`queue:failed`), and `ScheduleRunCommand`
-(`queue:schedule`) are registered automatically by `QueueServiceProvider::boot()` when the
+`WorkCommand` (`queue:work`), `FailedCommand` (`queue:failed`), `MonitorCommand`
+(`queue:monitor`), and `ScheduleRunCommand` (`queue:schedule`) are registered automatically by `QueueServiceProvider::boot()` when the
 application implements `CommandRegistryInterface` — no manual `$app->registerCommand()` call
 needed.
 
