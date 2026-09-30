@@ -103,7 +103,7 @@ public function middleware(): array
 
 A middleware that does not want the job to run now calls `$job->releaseAfter($seconds)` and returns without calling `$next`; the Worker puts the job back with that delay (at least 1 second, so a still-blocked job cannot spin) **without consuming an attempt**. Write your own by implementing `Middleware\JobMiddlewareInterface`.
 
-`WithoutOverlapping` and `UniqueQueue` need a `Lock\JobLockInterface`: `InMemoryJobLock` (tests / single process) or `CacheJobLock` (needs `ez-php/cache`; use a shared store such as Redis or File). `RateLimited` needs `ez-php/rate-limiter`.
+`WithoutOverlapping` and `UniqueQueue` need a `Lock\JobLockInterface`: `InMemoryJobLock` (tests / single process) or `CacheJobLock` (needs `ez-php/cache`; use Redis or Memcached for `UniqueQueue` — the File cache driver's `flock()` locks end with the dispatching process). `CacheJobLock` releases a lock it acquired itself only while it still owns it; the worker's release of a `UniqueQueue` lock (acquired by the dispatcher) is a force-release, so give unique locks a TTL above the worst-case queue wait plus runtime. `RateLimited` needs `ez-php/rate-limiter`.
 
 ## Unique jobs
 

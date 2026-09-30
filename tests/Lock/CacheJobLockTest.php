@@ -39,4 +39,29 @@ final class CacheJobLockTest extends TestCase
         $this->assertTrue((new CacheJobLock($cache))->acquire('job', 60));
         $this->assertFalse((new CacheJobLock($cache))->acquire('job', 60));
     }
+
+    public function testLateReleaseDoesNotDeleteALockTakenSinceByAnotherHolder(): void
+    {
+        $cache = new ArrayDriver();
+        $old = new CacheJobLock($cache);
+
+        $this->assertTrue($old->acquire('job', -1)); // expired as soon as taken
+        $this->assertTrue((new CacheJobLock($cache))->acquire('job', 60));
+
+        $old->release('job');
+
+        $this->assertFalse((new CacheJobLock($cache))->acquire('job', 60));
+    }
+
+    public function testReleaseFromAnotherProcessStillReleases(): void
+    {
+        // UniqueQueue: the dispatcher acquires, the worker (another instance) releases.
+        $cache = new ArrayDriver();
+
+        $this->assertTrue((new CacheJobLock($cache))->acquire('job', 60));
+
+        (new CacheJobLock($cache))->release('job');
+
+        $this->assertTrue((new CacheJobLock($cache))->acquire('job', 60));
+    }
 }

@@ -28,10 +28,11 @@ docker compose exec app composer full
 Executes in order:
 1. `sync_guidelines.php --check` — fails if any `CLAUDE.md` has drifted from this file
 2. `check_test_classes.php` — fails on a duplicate test class name (all packages share the `Tests\` namespace, so a collision is a fatal error in the aggregated run, not a test failure)
-3. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
-4. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+3. `check_module_deps.php` — fails when a package's code imports an ez-php package its `composer.json` does not declare (module `src`: `require`/`suggest`; tests: `require`/`require-dev` and their dependencies), or requires one it never uses
+4. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
+5. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
    *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
-5. `phpunit` — all tests with coverage
+6. `phpunit` — all tests with coverage
 
 Individual commands when needed:
 ```
@@ -40,6 +41,7 @@ composer cs                  # CS Fixer only
 composer test                # PHPUnit only
 composer guidelines:check    # CLAUDE.md drift only
 composer test-classes:check  # duplicate test class names only
+composer module-deps:check   # undeclared / unused ez-php package dependencies only
 ```
 
 **PHPStan:** never suppress with `@phpstan-ignore-line` — always fix the root cause.
@@ -198,20 +200,22 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
-Pass `--services` to merge MySQL/Redis/Meilisearch service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+Pass `--services` to merge MySQL/Redis/Meilisearch/Memcached/Mailpit service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
 ```
 vendor/bin/docker-init --services=mysql
 vendor/bin/docker-init --services=redis
 vendor/bin/docker-init --services=meilisearch
 vendor/bin/docker-init --services=mysql,redis
+vendor/bin/docker-init --services=memcached,mailpit
 ```
 
-Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`:
+Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`, `memcached`, `apcu` (with `apc.enable_cli=1`):
 
 ```
 vendor/bin/docker-init --extensions=gmp,bcmath
 vendor/bin/docker-init --extensions=gd,imagick
+vendor/bin/docker-init --extensions=memcached,apcu
 ```
 
 When run from a module directory inside this monorepo, any requested extension not already present is also merged into the shared root `docker/app/Dockerfile` — the container `composer full` at the root actually runs against, distinct from the module's own standalone image.
@@ -259,7 +263,7 @@ When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array i
 
 # Package: ez-php/queue
 
-Async job queue for ez-php applications — database and Redis drivers, a Worker loop, failed-job management, a cron-style Scheduler, and console commands (`queue:work`, `queue:failed`, `queue:schedule`).
+Async job queue for ez-php applications — database and Redis drivers, a Worker loop, failed-job management, a cron-style Scheduler, and console commands (`queue:work`, `queue:failed`, `queue:monitor`, `queue:schedule`).
 
 ---
 
@@ -283,7 +287,7 @@ src/
 ├── Lock/
 │   ├── JobLockInterface.php        — acquire(key, ttl) / release(key); shared by WithoutOverlapping and UniqueQueue
 │   ├── InMemoryJobLock.php         — process-local lock for tests and driver=memory
-│   └── CacheJobLock.php            — ez-php/cache-backed lock (soft dependency), shared between web and worker processes
+│   └── CacheJobLock.php            — ez-php/cache-backed lock (soft dependency), shared between web and worker processes; owned release for locks it acquired, forceRelease() otherwise
 ├── Driver/
 │   ├── DatabaseDriver.php          — PDO-backed driver; atomic pop via transaction; supports delayed delivery; implements FailedJobRepositoryInterface
 │   ├── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; delayed jobs in a sorted set, moved when due
@@ -313,7 +317,7 @@ tests/
 │   └── RedisDriverTest.php         — Covers RedisDriver incl. delayed/released jobs; skipped when ext-redis is unavailable
 ├── Scheduling/
 │   ├── ScheduledTaskTest.php       — Covers ScheduledTask: cron/daily/hourly/everyMinutes, isDue()
-│   └── SchedulerTest.php           — Covers Scheduler: task registration, dueNow(), job class resolution
+│   └── SchedulerTest.php           — Covers Scheduler: task registration, dueJobs(), job class resolution
 ├── Console/
 │   ├── WorkCommandTest.php         — Covers WorkCommand: getName, output, maxJobs, queue name, stats summary
 │   ├── MonitorCommandTest.php      — Covers MonitorCommand: getName, output, queue depths, failed count, --queues option
@@ -479,7 +483,7 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 
 `ScheduledTask` is a fluent builder that stores the job class and its cron expression. `isDue(\DateTimeImmutable)` checks whether the expression matches the given time, via `ez-php/support`'s `CronExpression::isDue()` — the same matcher `ez-php/scheduler` uses, instead of a private copy of it (supports `*`, `N`, `*/N`; a malformed expression is never due).
 
-`ScheduleRunCommand` (`queue:schedule`) calls `$scheduler->dueNow()` and pushes each due job onto the queue. Run from a system cron every minute: `* * * * * php ez queue:schedule`.
+`ScheduleRunCommand` (`queue:schedule`) calls `$scheduler->dueJobs(new \DateTimeImmutable())` and pushes each due job onto the queue. Run from a system cron every minute: `* * * * * php ez queue:schedule`.
 
 ---
 
