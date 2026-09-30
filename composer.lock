@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e9802c6b8f1a7548e79e7766c978260e",
+    "content-hash": "b50c214e14156e2fae7b2e9c2c2b798c",
     "packages": [
         {
             "name": "ez-php/console",
@@ -641,16 +641,16 @@
         },
         {
             "name": "ez-php/cache",
-            "version": "2.5.4",
+            "version": "2.5.5",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/cache.git",
-                "reference": "cc4fb64d762aebf8489a340a751f40dd21742249"
+                "reference": "c3bb1775618788fe4081814ff5cfc8862ea31a62"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/cache/zipball/cc4fb64d762aebf8489a340a751f40dd21742249",
-                "reference": "cc4fb64d762aebf8489a340a751f40dd21742249",
+                "url": "https://api.github.com/repos/ez-php/cache/zipball/c3bb1775618788fe4081814ff5cfc8862ea31a62",
+                "reference": "c3bb1775618788fe4081814ff5cfc8862ea31a62",
                 "shasum": ""
             },
             "require": {
@@ -699,7 +699,7 @@
                 "issues": "https://github.com/ez-php/cache/issues",
                 "source": "https://github.com/ez-php/cache"
             },
-            "time": "2026-09-26T02:22:22+00:00"
+            "time": "2026-09-30T14:17:57+00:00"
         },
         {
             "name": "ez-php/docker",
