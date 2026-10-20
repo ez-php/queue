@@ -35,9 +35,9 @@ Add `config/queue.php` to your application:
 return [
     'driver' => getenv('QUEUE_DRIVER') ?: 'database',  // 'database' | 'redis'
     'redis'  => [
-        'host'     => getenv('REDIS_HOST') ?: '127.0.0.1',
-        'port'     => (int) (getenv('REDIS_PORT') ?: 6379),
-        'database' => (int) (getenv('REDIS_DATABASE') ?: 0),
+        'host'     => getenv('QUEUE_REDIS_HOST') ?: '127.0.0.1',
+        'port'     => (int) (getenv('QUEUE_REDIS_PORT') ?: 6379),
+        'database' => (int) (getenv('QUEUE_REDIS_DB') ?: 0),
     ],
 ];
 ```
@@ -65,6 +65,26 @@ final class SendWelcomeEmail extends Job
     }
 }
 ```
+
+### Retry backoff
+
+A failed job is re-queued until it has run `$maxTries` times. By default every retry waits
+`$delay` seconds; set `$backoff` to give each retry its own delay:
+
+```php
+final class SyncInventory extends Job
+{
+    protected int $maxTries = 5;
+
+    /** Wait 10 s after the 1st failure, 30 s after the 2nd, 60 s after every later one. */
+    protected array $backoff = [10, 30, 60];
+
+    public function handle(): void { /* ... */ }
+}
+```
+
+The last element repeats for attempts beyond the list's length. An empty `$backoff`
+(the default) falls back to `$delay`.
 
 ## Dispatching Jobs
 
@@ -116,6 +136,36 @@ $queue = new UniqueQueue($innerQueue, $locks);   // same $locks as the Worker
 
 The lock is released when the job succeeds or fails permanently, and survives retries. Note that the wrapper hides `FailedJobRepositoryInterface`, so `queue:failed` needs the unwrapped driver.
 
+## JSON job payloads
+
+By default a job is stored PHP-serialized. Implement `JsonPayloadJobInterface` to store it as
+plain JSON instead — readable by other tooling, and restored without `unserialize()`:
+
+```php
+use EzPhp\Queue\Job;
+use EzPhp\Queue\JsonPayloadJobInterface;
+
+final class ShipOrder extends Job implements JsonPayloadJobInterface
+{
+    public function __construct(private readonly int $orderId) {}
+
+    public function handle(): void { /* ... */ }
+
+    public function toPayload(): array
+    {
+        return ['order_id' => $this->orderId];
+    }
+
+    public static function fromPayload(array $payload): static
+    {
+        return new static((int) $payload['order_id']);
+    }
+}
+```
+
+The attempt count is stored alongside and restored automatically. Other jobs keep working
+unchanged; jobs chained inside a `JobChain` stay PHP-serialized.
+
 ## Job chains
 
 ```php
@@ -131,7 +181,21 @@ php ez queue:work                  # process 'default' queue, sleep 3s on empty
 php ez queue:work emails           # process 'emails' queue
 php ez queue:work emails --sleep=5 # custom sleep interval
 php ez queue:work --max-jobs=100   # stop after 100 jobs (useful for cron-based workers)
+php ez queue:work high,default,low # priority queues
 ```
+
+### Priority queues
+
+Pass several queue names, comma-separated, in priority order. Before every job the worker
+polls the queues from left to right and runs the first job it finds, so `low` is only
+served while `high` and `default` are empty. Programmatically the same list goes to
+`Worker::work()` / `runNextJob()`:
+
+```php
+$worker->work(['high', 'default', 'low'], sleep: 3);
+```
+
+Dispatch to a priority by setting the job's `$queue` (`protected string $queue = 'high';`).
 
 ## Drivers
 

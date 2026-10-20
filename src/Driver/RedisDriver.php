@@ -217,6 +217,7 @@ final class RedisDriver implements QueueInterface
         $payload = json_encode([
             'class' => $envelope['class'],
             'classes' => $envelope['classes'],
+            'format' => $envelope['format'] ?? 'php',
             'job' => $envelope['data'],
             'exception' => $exception->getMessage(),
             'trace' => $exception->getTraceAsString(),

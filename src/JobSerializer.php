@@ -20,6 +20,10 @@ use Throwable;
  * class alone turns nested objects into `__PHP_Incomplete_Class` and breaks
  * typed properties.
  *
+ * Jobs implementing JsonPayloadJobInterface are stored as JSON instead
+ * (`format: json`, `data` = `{"payload": …, "attempts": n}`) and restored via
+ * fromPayload() without any unserialize() call.
+ *
  * Trust model: the list lives in the same record as the payload, so it limits
  * the classes that can be instantiated to the ones present at push() time, but
  * it is no defence against someone who can write arbitrary rows to the queue
@@ -37,10 +41,20 @@ final class JobSerializer
      *
      * @throws QueueException When the job cannot be serialized (e.g. it holds a closure).
      *
-     * @return array{class: class-string, classes: list<string>, data: string}
+     * @return array{class: class-string, classes: list<string>, data: string, format?: 'json'}
      */
     public static function serialize(JobInterface $job): array
     {
+        if ($job instanceof JsonPayloadJobInterface) {
+            try {
+                $data = json_encode(['payload' => $job->toPayload(), 'attempts' => $job->getAttempts()], JSON_THROW_ON_ERROR);
+            } catch (Throwable $e) {
+                throw new QueueException('Job payload cannot be JSON-encoded: ' . $e->getMessage(), 0, $e);
+            }
+
+            return ['class' => $job::class, 'classes' => [$job::class], 'data' => $data, 'format' => 'json'];
+        }
+
         try {
             $data = serialize($job);
         } catch (Throwable $e) {
@@ -75,6 +89,10 @@ final class JobSerializer
             throw new QueueException('Invalid job payload envelope.');
         }
 
+        if (($envelope['format'] ?? null) === 'json') {
+            return self::fromJson($class, $data);
+        }
+
         $allowed = [$class];
 
         if (isset($envelope['classes']) && is_array($envelope['classes'])) {
@@ -90,6 +108,44 @@ final class JobSerializer
 
         if (!$job instanceof JobInterface) {
             throw new QueueException('Deserialized payload is not a JobInterface instance.');
+        }
+
+        return $job;
+    }
+
+    /**
+     * Restore a JSON-stored job through its fromPayload(), re-applying the attempt count.
+     *
+     * @param string $class
+     * @param string $data
+     *
+     * @throws QueueException When the class is not a JsonPayloadJobInterface or the data is invalid.
+     *
+     * @return JobInterface
+     */
+    private static function fromJson(string $class, string $data): JobInterface
+    {
+        if (!is_subclass_of($class, JsonPayloadJobInterface::class)) {
+            throw new QueueException("JSON job payload names '{$class}', which does not implement " . JsonPayloadJobInterface::class . '.');
+        }
+
+        try {
+            $decoded = json_decode($data, true, 512, JSON_THROW_ON_ERROR);
+        } catch (Throwable $e) {
+            throw new QueueException('Invalid JSON job payload: ' . $e->getMessage(), 0, $e);
+        }
+
+        if (!is_array($decoded) || !is_array($decoded['payload'] ?? null)) {
+            throw new QueueException('Invalid JSON job payload: missing "payload".');
+        }
+
+        /** @var array<string, mixed> $payload */
+        $payload = $decoded['payload'];
+        $job = $class::fromPayload($payload);
+        $attempts = is_int($decoded['attempts'] ?? null) ? $decoded['attempts'] : 0;
+
+        while ($job->getAttempts() < $attempts) {
+            $job->incrementAttempts();
         }
 
         return $job;

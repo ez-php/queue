@@ -280,7 +280,8 @@ src/
 ├── ShouldBeUnique.php              — Marker for jobs that must not be queued twice (uniqueId(), uniqueFor())
 ├── UniqueQueue.php                 — QueueInterface decorator: drops a duplicate ShouldBeUnique push while its lock is held
 ├── JobChain.php                    — Builder: JobChain::of($a, $b, $c)->dispatch($queue); next job is pushed after the previous succeeded
-├── JobSerializer.php               — Shared storage envelope for all drivers: records every class in the payload, restores with allowed_classes limited to that list
+├── JobSerializer.php               — Shared storage envelope for all drivers: records every class in the payload, restores with allowed_classes limited to that list; JSON envelope for JsonPayloadJobInterface jobs
+├── JsonPayloadJobInterface.php     — Opt-in: toPayload()/static fromPayload() — job stored as JSON, restored without unserialize()
 ├── Middleware/
 │   ├── JobMiddlewareInterface.php  — handle(JobInterface, callable $next); wraps Job::handle() inside the Worker
 │   ├── WithoutOverlapping.php      — Execution-time mutual exclusion per key via JobLockInterface; blocked jobs are released
@@ -305,6 +306,7 @@ src/
 tests/
 ├── TestCase.php                    — Base PHPUnit test case
 ├── JobSerializerTest.php           — Covers JobSerializer: class list (nested objects, enums, chains), legacy envelopes, malformed payloads
+├── JobSerializerJsonPayloadTest.php — JSON envelope: stored form, round trip incl. attempts, via InMemoryDriver, rejection of non-JSON classes / bad data
 ├── Support/                        — QueuePayload* fixtures: a job with nested objects + an enum (one class per file for PSR-4)
 ├── JobTest.php                     — Covers Job: defaults, custom props, attempt counter, fail hook, serialization
 ├── WorkerTest.php                  — Covers Worker: runNextJob, success, retry, permanent failure, maxJobs stop
@@ -341,6 +343,17 @@ Abstract base class. Subclasses implement `handle()` with the actual work. Confi
 | `$queue` | `'default'` | Queue name this job is dispatched to |
 | `$delay` | `0` | Seconds before the job becomes available |
 | `$maxTries` | `3` | Maximum execution attempts before permanent failure |
+| `$backoff` | `[]` | Per-retry delays in seconds (`[10, 30, 60]`); the last element repeats for later attempts; empty = use `$delay` |
+
+**Retry backoff** — when a job fails and retries remain, the `Worker` re-queues it via `Job::withDelay()` with the delay for the attempt just made (`$backoff[$attempt - 1]`, clamped to the last element), or `$delay` when `$backoff` is empty. Example:
+
+```php
+final class SyncInventory extends Job
+{
+    protected int $maxTries = 5;
+    protected array $backoff = [10, 30, 60]; // 10 s, 30 s, then 60 s for every later retry
+}
+```
 
 `$attempts` is private and only accessible via `getAttempts()` / `incrementAttempts()`. It is serialised with the job so attempt counts survive re-queue cycles.
 
@@ -359,7 +372,9 @@ Pops and processes jobs one at a time from a `QueueInterface`.
 | `process(JobInterface $job)` | Increments attempts, calls `handle()`; on exception: re-queues if retries remain, marks failed otherwise |
 | `getStats()` | Returns `{processed, retried, failed}` counters accumulated since the last `work()` call |
 
-Retry logic: if `getAttempts() < getMaxTries()`, the job is re-pushed with its current state (including incremented attempt count, since the whole object is serialised). On exhaustion, `$queue->failed()` is called.
+Retry logic: if `getAttempts() < getMaxTries()`, the job is re-pushed with its current state (including incremented attempt count, since the whole object is serialised), delayed by its `$backoff` entry for that attempt (see Job). On exhaustion, `$queue->failed()` is called.
+
+**Priority queues** — `work()`/`runNextJob()` accept an ordered list of queue names. Before every job the list is polled from the first entry on, and the first job found runs, so a later queue is served only while all earlier ones are empty (strict priority, no weighting). `queue:work high,default,low` passes the same list. Example: `$worker->work(['high', 'default', 'low'])`.
 
 ---
 
@@ -491,7 +506,7 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 ## Design Decisions and Constraints
 
 - **`pop()` deletes immediately (pop-and-delete)** — The database driver atomically SELECTs and DELETEs in one transaction. This means a worker crash between pop and handle loses the job. The trade-off is simplicity: no reserved_at column, no heartbeat, no stuck-job cleanup daemon. Retry is handled at the application level by re-pushing on failure.
-- **Job state is serialised with `serialize()`** — The whole job object, including `$attempts`, is PHP-serialised. This makes re-queueing after failure trivial: push the same object back. The downside is PHP-only portability. JSON-based payloads are a future option but require jobs to implement a toArray/fromArray contract.
+- **Job state is serialised with `serialize()` by default, JSON on opt-in** — The whole job object, including `$attempts`, is PHP-serialised, which makes re-queueing after failure trivial: push the same object back. The downside is PHP-only portability and an `unserialize()` (restricted to the envelope's class list) on data read back from Redis/DB. A job implementing `JsonPayloadJobInterface` (`toPayload()` / `static fromPayload()`) is stored instead as `format: json` with `data = {"payload": …, "attempts": n}`; `JobSerializer` restores it through `fromPayload()` (the class must implement the interface) and re-applies the attempt count via `incrementAttempts()` — no `unserialize()` at all. Only the top-level job is JSON; jobs inside a `JobChain` stay serialised. No cross-language worker is included.
 - **Auto-created tables in DatabaseDriver** — `CREATE TABLE IF NOT EXISTS` runs in the constructor. This is intentional for ease of use in development and testing. In production, users can also create the tables via their migration system using the DDL shown in the README.
 - **RedisDriver honours `$delay` via a sorted set, without a daemon** — Delayed jobs are `ZADD`ed to `queues:delayed:{name}` (score = available-at Unix time); every `pop()` first runs one Lua script that moves up to 100 due members onto the `queues:{name}` list, so the move is atomic across concurrent workers and needs no separate polling process. Each delayed member gets a random `id` in its JSON envelope because sorted-set members are unique — two byte-identical jobs would otherwise merge into one. This is required, not optional: the Worker re-pushes released jobs (`RateLimited`, `WithoutOverlapping` → `releaseAfter()`) and retries with their delay, and a driver that ignored delays would pop them straight back in a tight loop.
 - **Commands are auto-registered through `CommandRegistryInterface`, not `Application`** — `boot()` checks `$this->app instanceof CommandRegistryInterface` (an `ez-php/contracts` interface) before calling `registerCommand()`, so the module never imports the concrete `Application` class and stays usable with a plain `ContainerInterface`.
@@ -529,9 +544,7 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 |---|---|
 | Job scheduling (cron-style) | `ez-php/scheduler` |
 | Async / parallel execution | Application layer (pcntl, Amp, ReactPHP) |
-| Retry backoff strategies (exponential, jitter) | Application layer (override `fail()` and re-push with modified `$delay`) |
 | Queue monitoring / dashboard | Application layer |
 | Rate-limiting logic itself | `ez-php/rate-limiter` (this module only ships the `Middleware\RateLimited` adapter) |
 | Batches with progress tracking / dashboards | Application layer |
 | Email sending (use case) | `ez-php/mail` |
-| Priority queues | Future driver extension or application layer |

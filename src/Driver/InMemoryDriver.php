@@ -33,7 +33,7 @@ final class InMemoryDriver implements QueueInterface
     /**
      * Queued envelopes, keyed by queue name.
      *
-     * @var array<string, list<array{envelope: array{class: class-string, classes: list<string>, data: string}, available_at: int, seq: int}>>
+     * @var array<string, list<array{envelope: array{class: class-string, classes: list<string>, data: string, format?: 'json'}, available_at: int, seq: int}>>
      */
     private array $queues = [];
 
