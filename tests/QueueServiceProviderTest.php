@@ -25,7 +25,6 @@ use PDO;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\UsesClass;
-use PHPUnit\Framework\TestCase as BaseTestCase;
 
 /**
  * Class QueueServiceProviderTest
@@ -45,7 +44,7 @@ use PHPUnit\Framework\TestCase as BaseTestCase;
 #[UsesClass(Worker::class)]
 #[UsesClass(Scheduler::class)]
 #[UsesClass(QueueException::class)]
-final class QueueServiceProviderTest extends BaseTestCase
+final class QueueServiceProviderTest extends TestCase
 {
     /**
      * @return ContainerInterface&CommandRegistryInterface

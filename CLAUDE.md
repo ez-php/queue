@@ -306,6 +306,7 @@ src/
 
 tests/
 ├── TestCase.php                    — Base PHPUnit test case
+├── QueueServiceProviderTest.php  — Verifies that QueueServiceProvider::boot() auto-registers the queue console commands when the container implements CommandRegistryInterface
 ├── JobSerializerTest.php           — Covers JobSerializer: class list (nested objects, enums, chains), legacy envelopes, malformed payloads
 ├── JobSerializerJsonPayloadTest.php — JSON envelope: stored form, round trip incl. attempts, via InMemoryDriver, rejection of non-JSON classes / bad data
 ├── Support/                        — QueuePayload* fixtures: a job with nested objects + an enum (one class per file for PSR-4)
@@ -314,10 +315,14 @@ tests/
 ├── JobChainTest.php                — Covers JobChain: order, next-after-success, chain dropped on permanent failure
 ├── UniqueQueueTest.php             — Covers UniqueQueue + Worker lock release: duplicates, retries, success/failure release
 ├── Lock/                           — InMemoryJobLock and CacheJobLock (ArrayDriver) tests
+│   ├── InMemoryJobLockTest.php  — acquire/release, independent keys, zero TTL, no-op release
+│   └── CacheJobLockTest.php  — exclusivity, sharing across instances, late release, cross-process release
 ├── Middleware/                     — Pipeline order, release-without-attempt, WithoutOverlapping, RateLimited (fixtures in MiddlewareFixtures.php)
+│   └── JobMiddlewarePipelineTest.php  — pipeline order, failures and retries, release(), WithoutOverlapping, RateLimited
 ├── Driver/
 │   ├── DatabaseDriverTest.php      — Covers DatabaseDriver against SQLite :memory: (no MySQL needed)
 │   ├── QueueJobPayloadRoundTripTest.php — Push/pop of a job with nested objects, an enum and a chain through all three drivers; failed-job retry
+│   ├── InMemoryDriverTest.php  — FIFO pop, per-queue isolation, delays, size(), failed(), copies on pop, flush()
 │   └── RedisDriverTest.php         — Covers RedisDriver incl. delayed/released jobs; skipped when ext-redis is unavailable
 ├── Scheduling/
 │   ├── ScheduledTaskTest.php       — Covers ScheduledTask: cron/daily/hourly/everyMinutes, isDue()

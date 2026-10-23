@@ -6,6 +6,8 @@ namespace Tests\Middleware;
 
 use EzPhp\Queue\Driver\InMemoryDriver;
 use EzPhp\Queue\Job;
+use EzPhp\Queue\Middleware\RateLimited;
+use EzPhp\Queue\Middleware\WithoutOverlapping;
 use EzPhp\Queue\Worker;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
@@ -15,6 +17,8 @@ require_once __DIR__ . '/MiddlewareFixtures.php';
 
 #[CoversClass(Worker::class)]
 #[CoversClass(Job::class)]
+#[CoversClass(WithoutOverlapping::class)]
+#[CoversClass(RateLimited::class)]
 #[UsesClass(InMemoryDriver::class)]
 final class JobMiddlewarePipelineTest extends TestCase
 {
