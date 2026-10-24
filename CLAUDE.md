@@ -232,7 +232,7 @@ After scaffolding:
 |---|---|---|---|
 | root (`ez-php-project`) | 3306 | 6379 (`REDIS_PORT`) | 7700 |
 | `ez-php/framework` | 3307 | — | — |
-| `ez-php/` (application template) | 3308 | 6383 (`REDIS_PORT`) | — |
+| `ez-php/` (application template) | 3308 | 6383 (`REDIS_PORT`) | 7702 (opt-in service) |
 | `ez-php/orm` | 3309 | — | — |
 | `ez-php/cache` | — | 6380 (`REDIS_HOST_PORT`) | — |
 | `ez-php/queue` | 3310 | 6381 (`REDIS_HOST_PORT`) | — |
@@ -245,7 +245,7 @@ After scaffolding:
 | `ez-php/session` | — | 6387 (`REDIS_HOST_PORT`) | — |
 | `ez-php/metrics` | — | 6388 (`REDIS_HOST_PORT`) | — |
 | `ez-php/event-store-snapshots` | 3312 | — | — |
-| **next free** | **3313** | **6389** | **7702** |
+| **next free** | **3313** | **6389** | **7703** |
 
 Only set a port for services the module actually uses. Modules without external services need no port config.
 
@@ -515,7 +515,7 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 - **Job state is serialised with `serialize()` by default, JSON on opt-in** — The whole job object, including `$attempts`, is PHP-serialised, which makes re-queueing after failure trivial: push the same object back. The downside is PHP-only portability and an `unserialize()` (restricted to the envelope's class list) on data read back from Redis/DB. A job implementing `JsonPayloadJobInterface` (`toPayload()` / `static fromPayload()`) is stored instead as `format: json` with `data = {"payload": …, "attempts": n}`; `JobSerializer` restores it through `fromPayload()` (the class must implement the interface) and re-applies the attempt count via `incrementAttempts()` — no `unserialize()` at all. Only the top-level job is JSON; jobs inside a `JobChain` stay serialised. No cross-language worker is included.
 - **Auto-created tables in DatabaseDriver** — `CREATE TABLE IF NOT EXISTS` runs in the constructor. This is intentional for ease of use in development and testing. In production, users can also create the tables via their migration system using the DDL shown in the README.
 - **RedisDriver honours `$delay` via a sorted set, without a daemon** — Delayed jobs are `ZADD`ed to `queues:delayed:{name}` (score = available-at Unix time); every `pop()` first runs one Lua script that moves up to 100 due members onto the `queues:{name}` list, so the move is atomic across concurrent workers and needs no separate polling process. Each delayed member gets a random `id` in its JSON envelope because sorted-set members are unique — two byte-identical jobs would otherwise merge into one. This is required, not optional: the Worker re-pushes released jobs (`RateLimited`, `WithoutOverlapping` → `releaseAfter()`) and retries with their delay, and a driver that ignored delays would pop them straight back in a tight loop.
-- **Commands are auto-registered through `CommandRegistryInterface`, not `Application`** — `boot()` checks `$this->app instanceof CommandRegistryInterface` (an `ez-php/contracts` interface) before calling `registerCommand()`, so the module never imports the concrete `Application` class and stays usable with a plain `ContainerInterface`.
+- **Commands are auto-registered through `CommandRegistryInterface`, not `Application`** — `boot()` registers them through `ez-php/contracts`' `ServiceProvider::registerCommand()` helper, which forwards only when the container implements `CommandRegistryInterface`, so the module never imports the concrete `Application` class and stays usable with a plain `ContainerInterface`.
 - **The storage envelope lists every class in the payload** — `JobSerializer` records all `O:`/`C:`/`E:` class names found in the serialized job and `pop()` passes exactly that list to `allowed_classes`. `allowed_classes` applies to every nested object, so restricting it to the top-level job class turned a `Mailable`, `PushMessage`, event or chained job into `__PHP_Incomplete_Class` (a `TypeError` on typed properties). The list is stored next to the payload, so it limits instantiation to what was pushed but does not protect against an attacker who can write queue rows — queue storage must only be written by `push()`/`failed()`. Envelopes without a `classes` key (written before this change) fall back to the top-level class.
 - **`failed()` is on the interface** — Driver-specific failure stores (DB table vs Redis list) require the interface to expose a `failed()` method. The alternative (casting to a driver-specific interface in the Worker) would couple the Worker to concrete drivers.
 - **`InMemoryDriver` serializes jobs even though it holds them in memory** — Storing the object by reference would be faster, but a job that cannot be serialized would then pass its tests against the in-memory driver and fail only against `DatabaseDriver`/`RedisDriver` in production. Round-tripping through `serialize()`/`unserialize()` makes the test double reproduce the real constraint, and means a popped job is a copy rather than the pushed instance.
