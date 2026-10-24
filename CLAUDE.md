@@ -503,7 +503,7 @@ $scheduler->job(SyncData::class)->everyMinutes(15);
 $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 ```
 
-`ScheduledTask` is a fluent builder that stores the job class and its cron expression. `isDue(\DateTimeImmutable)` checks whether the expression matches the given time, via `ez-php/support`'s `CronExpression::isDue()` — the same matcher `ez-php/scheduler` uses, instead of a private copy of it (supports `*`, `N`, `*/N`; a malformed expression is never due).
+`ScheduledTask` is a fluent builder that stores the job class and its cron expression. `isDue(\DateTimeImmutable)` checks whether the expression matches the given time, via `ez-php/support`'s `CronExpression::isDue()` — the same matcher `ez-php/scheduler` uses, instead of a private copy of it (supports `*`, `N`, `A-B`, `*/N`, `A-B/N` and comma lists; a malformed expression is never due).
 
 `ScheduleRunCommand` (`queue:schedule`) calls `$scheduler->dueJobs(new \DateTimeImmutable())` and pushes each due job onto the queue. Run from a system cron every minute: `* * * * * php ez queue:schedule`.
 
