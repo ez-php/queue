@@ -265,7 +265,7 @@ $scheduler = $app->make(\EzPhp\Queue\Scheduling\Scheduler::class);
 $scheduler->job(SendDailyReport::class)->daily();
 $scheduler->job(PruneTokens::class)->hourly();
 $scheduler->job(SyncData::class)->everyMinutes(15);
-$scheduler->job(CustomJob::class)->cron('30 6 * * 1');
+$scheduler->job(CustomJob::class)->cron('30 6 * * 1');          // ez-php/support CronExpression syntax; dom/dow OR when both restricted
 
 // Full fluent API:
 $scheduler->job(SendMinuteDigest::class)->everyMinute();

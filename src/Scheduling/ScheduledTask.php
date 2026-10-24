@@ -26,7 +26,8 @@ use EzPhp\Support\CronExpression;
  *
  * The five cron fields are (in order): minute hour day-of-month month day-of-week.
  * Supported field syntax (via ez-php/support's CronExpression): *, N, A-B,
- * *\/N, A-B/N and comma-separated lists of those.
+ * *\/N, A-B/N and comma-separated lists of those; with both day-of-month and
+ * day-of-week restricted, either matching is enough (standard cron).
  *
  * @package EzPhp\Queue\Scheduling
  */
