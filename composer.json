@@ -1,6 +1,6 @@
 {
     "name": "ez-php/queue",
-    "version": "2.6.5",
+    "version": "2.7.0",
     "description": "Async job queue for the ez-php framework \u2014 database and Redis drivers, Worker, and queue:work command",
     "type": "library",
     "license": "MIT",
@@ -27,9 +27,9 @@
     "require": {
         "php": "^8.5",
         "ext-pdo": "*",
-        "ez-php/contracts": "^2.6.0",
-        "ez-php/console": "^2.6.0",
-        "ez-php/support": "^2.6.0"
+        "ez-php/contracts": "^2.7.0",
+        "ez-php/console": "^2.7.0",
+        "ez-php/support": "^2.7.0"
     },
     "suggest": {
         "ext-redis": "Needed for Driver\\RedisDriver",
@@ -37,16 +37,16 @@
         "ez-php/rate-limiter": "Needed for Middleware\\RateLimited"
     },
     "require-dev": {
-        "ez-php/cache": "^2.6.0",
-        "ez-php/rate-limiter": "^2.6.0",
-        "ez-php/docker": "^2.6.0",
-        "ez-php/framework": "^2.6.0",
+        "ez-php/cache": "^2.7.0",
+        "ez-php/rate-limiter": "^2.7.0",
+        "ez-php/docker": "^2.7.0",
+        "ez-php/framework": "^2.7.0",
         "phpunit/phpunit": "^13.0",
         "phpstan/phpstan": "^2.1",
         "friendsofphp/php-cs-fixer": "^3.94",
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpstan/phpstan-deprecation-rules": "^2.0",
-        "ez-php/testing-application": "^2.6.0"
+        "ez-php/testing-application": "^2.7.0"
     },
     "autoload": {
         "psr-4": {
