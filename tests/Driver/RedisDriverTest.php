@@ -56,7 +56,14 @@ final class RedisDriverTest extends TestCase
         $this->redis = new \Redis();
         $this->redis->connect($host, $port);
         $this->redis->select(1);
-        $this->redis->del('queues:delayed:default', 'queues:delayed:emails', 'queues:delayed:critical');
+        $this->redis->del(
+            'queues:delayed:default',
+            'queues:delayed:emails',
+            'queues:delayed:critical',
+            'queues:failed:default',
+            'queues:failed_jobs',
+            'queues:failed_jobs:id',
+        );
         // Flush only our test keys via pop-until-null
         while ($this->driver->pop('default') !== null) {
         }
@@ -140,16 +147,66 @@ final class RedisDriverTest extends TestCase
         $this->assertSame(0, $poppedSecond->getAttempts(), 'Second job should have 0 attempts');
     }
 
-    public function testFailedPushesToFailedList(): void
+    public function testFailedJobsCanBeListedRetriedAndForgotten(): void
     {
-        $job = $this->makeJob();
-        $e = new \RuntimeException('redis fail');
+        $this->driver->failed($this->makeJob(), new \RuntimeException('first failure'));
+        $this->driver->failed($this->makeJob('emails'), new \RuntimeException('second failure'));
 
-        $this->driver->failed($job, $e);
-
-        // The failed job is stored; we can't pop it via the normal queue,
-        // but size() of the main queue should remain 0.
         $this->assertSame(0, $this->driver->size());
+
+        $rows = $this->driver->all();
+        $this->assertCount(2, $rows);
+        $this->assertSame([1, 2], array_column($rows, 'id'));
+        $this->assertSame(['default', 'emails'], array_column($rows, 'queue'));
+        $this->assertStringStartsWith("first failure\n", $rows[0]['exception']);
+
+        $this->assertTrue($this->driver->retry(1, $this->driver));
+        $this->assertInstanceOf(RedisTestJob::class, $this->driver->pop('default'));
+        $this->assertFalse($this->driver->retry(1, $this->driver));
+
+        $this->assertTrue($this->driver->forget(2));
+        $this->assertFalse($this->driver->forget(2));
+        $this->assertSame([], $this->driver->all());
+    }
+
+    public function testFlushRemovesEveryFailedJob(): void
+    {
+        $this->driver->failed($this->makeJob(), new \RuntimeException('x'));
+        $this->driver->failed($this->makeJob(), new \RuntimeException('y'));
+
+        $this->driver->flush();
+
+        $this->assertSame([], $this->driver->all());
+    }
+
+    /**
+     * Failures written by versions before the hash existed sit in per-queue lists;
+     * they are moved into the hash so queue:failed can retry them.
+     */
+    public function testLegacyFailureListsAreMigrated(): void
+    {
+        $envelope = \EzPhp\Queue\JobSerializer::serialize($this->makeJob());
+        $this->redis->rPush('queues:failed:default', (string) json_encode([
+            'class' => $envelope['class'],
+            'classes' => $envelope['classes'],
+            'format' => $envelope['format'] ?? 'php',
+            'job' => $envelope['data'],
+            'exception' => 'legacy failure',
+            'trace' => '#0 {main}',
+            'failed_at' => '2026-10-01 12:00:00',
+        ]));
+        $this->redis->rPush('queues:failed:default', 'not json');
+
+        $rows = $this->driver->all();
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('default', $rows[0]['queue']);
+        $this->assertSame("legacy failure\n#0 {main}", $rows[0]['exception']);
+        $this->assertSame('2026-10-01 12:00:00', $rows[0]['failed_at']);
+        $this->assertSame(0, (int) $this->redis->exists('queues:failed:default'));
+
+        $this->assertTrue($this->driver->retry($rows[0]['id'], $this->driver));
+        $this->assertInstanceOf(RedisTestJob::class, $this->driver->pop('default'));
     }
 
     public function testJobSurvivesSerializeRoundTrip(): void

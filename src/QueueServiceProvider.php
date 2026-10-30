@@ -66,9 +66,9 @@ final class QueueServiceProvider extends ServiceProvider
             return new Scheduler();
         });
 
-        // FailedJobRepositoryInterface is only available with the database driver.
-        // The binding is registered unconditionally; resolving it when using
-        // the Redis driver will throw a ContainerException.
+        // FailedJobRepositoryInterface is implemented by the database and Redis drivers.
+        // The binding is registered unconditionally; resolving it with the memory
+        // driver throws a QueueException.
         $this->app->bind(
             FailedJobRepositoryInterface::class,
             function (ContainerInterface $app): FailedJobRepositoryInterface {
@@ -77,7 +77,7 @@ final class QueueServiceProvider extends ServiceProvider
                 if (!$queue instanceof FailedJobRepositoryInterface) {
                     throw new QueueException(
                         'The active queue driver does not implement FailedJobRepositoryInterface. ' .
-                        'Switch to the database driver to use queue:failed.'
+                        'Use the database or redis driver for queue:failed.'
                     );
                 }
 

@@ -6,6 +6,7 @@ namespace EzPhp\Queue\Driver;
 
 use EzPhp\Contracts\JobInterface;
 use EzPhp\Contracts\QueueInterface;
+use EzPhp\Queue\FailedJobRepositoryInterface;
 use EzPhp\Queue\JobSerializer;
 use EzPhp\Queue\QueueException;
 use Redis;
@@ -18,7 +19,10 @@ use Redis;
  * Jobs are pushed onto a Redis list (`queues:{name}`) with RPUSH and
  * consumed via LPOP. This gives FIFO order within a queue.
  *
- * Failed jobs are appended to a separate list (`queues:failed:{name}`).
+ * Failed jobs are stored in one hash (`queues:failed_jobs`, field = an id from
+ * `INCR queues:failed_jobs:id`), so the driver can serve `queue:failed`
+ * (FailedJobRepositoryInterface). Entries written by older versions to the
+ * per-queue lists `queues:failed:{name}` are moved into the hash on first use.
  *
  * Delayed jobs (`getDelay() > 0`, including jobs the Worker re-pushes after
  * `Job::releaseAfter()` or a retry) go to a sorted set (`queues:delayed:{name}`)
@@ -33,8 +37,17 @@ use Redis;
  *
  * @package EzPhp\Queue\Driver
  */
-final class RedisDriver implements QueueInterface
+final class RedisDriver implements QueueInterface, FailedJobRepositoryInterface
 {
+    private const string FAILED_KEY = 'queues:failed_jobs';
+
+    private const string FAILED_ID_KEY = 'queues:failed_jobs:id';
+
+    /**
+     * Key pattern of the per-queue failure lists written before the hash existed.
+     */
+    private const string LEGACY_FAILED_PATTERN = 'queues:failed:*';
+
     /**
      * Moves due members (score <= ARGV[1]) from the delayed set KEYS[1] onto the
      * ready list KEYS[2], at most ARGV[2] per call. Runs atomically in Redis.
@@ -213,17 +226,204 @@ final class RedisDriver implements QueueInterface
      */
     public function failed(JobInterface $job, \Throwable $exception): void
     {
-        $envelope = JobSerializer::serialize($job);
-        $payload = json_encode([
-            'class' => $envelope['class'],
-            'classes' => $envelope['classes'],
-            'format' => $envelope['format'] ?? 'php',
-            'job' => $envelope['data'],
-            'exception' => $exception->getMessage(),
-            'trace' => $exception->getTraceAsString(),
-            'failed_at' => date('Y-m-d H:i:s'),
-        ], JSON_THROW_ON_ERROR);
+        $this->storeFailure(
+            $job->getQueue(),
+            json_encode(JobSerializer::serialize($job), JSON_THROW_ON_ERROR),
+            $exception->getMessage() . "\n" . $exception->getTraceAsString(),
+            date('Y-m-d H:i:s'),
+        );
+    }
 
-        $this->redis->rPush('queues:failed:' . $job->getQueue(), $payload);
+    /**
+     * All failed jobs, oldest first, in the row shape of DatabaseDriver::all().
+     *
+     * @return list<array{id: int, queue: string, payload: string, exception: string, failed_at: string}>
+     */
+    public function all(): array
+    {
+        $this->migrateLegacyFailures();
+
+        $rows = [];
+
+        $records = $this->redis->hGetAll(self::FAILED_KEY);
+
+        foreach (is_array($records) ? $records : [] as $record) {
+            $row = self::decodeFailure($record);
+
+            if ($row !== null) {
+                $rows[] = $row;
+            }
+        }
+
+        usort($rows, static fn (array $a, array $b): int => $a['id'] <=> $b['id']);
+
+        return $rows;
+    }
+
+    /**
+     * Re-push failed job `$id` onto `$queue` and remove it from the archive.
+     *
+     * @param int            $id
+     * @param QueueInterface $queue
+     *
+     * @return bool False when the id is unknown or the payload cannot be restored.
+     */
+    public function retry(int $id, QueueInterface $queue): bool
+    {
+        $this->migrateLegacyFailures();
+
+        $row = self::decodeFailure($this->redis->hGet(self::FAILED_KEY, (string) $id));
+
+        if ($row === null) {
+            return false;
+        }
+
+        $envelope = json_decode($row['payload'], true);
+
+        if (!is_array($envelope)) {
+            return false;
+        }
+
+        try {
+            $job = JobSerializer::unserialize($envelope);
+        } catch (QueueException) {
+            return false;
+        }
+
+        $queue->push($job);
+        $this->redis->hDel(self::FAILED_KEY, (string) $id);
+
+        return true;
+    }
+
+    /**
+     * Delete failed job `$id`.
+     *
+     * @param int $id
+     *
+     * @return bool False when the id is unknown.
+     */
+    public function forget(int $id): bool
+    {
+        $this->migrateLegacyFailures();
+
+        return (int) $this->redis->hDel(self::FAILED_KEY, (string) $id) > 0;
+    }
+
+    /**
+     * Delete every failed job, including legacy per-queue lists.
+     *
+     * @return void
+     */
+    public function flush(): void
+    {
+        $this->migrateLegacyFailures();
+        $this->redis->del(self::FAILED_KEY);
+    }
+
+    /**
+     * @param string $queue
+     * @param string $payload   JSON storage envelope (JobSerializer::serialize()).
+     * @param string $exception Message and trace.
+     * @param string $failedAt  `Y-m-d H:i:s`.
+     *
+     * @return void
+     */
+    private function storeFailure(string $queue, string $payload, string $exception, string $failedAt): void
+    {
+        $id = (int) $this->redis->incr(self::FAILED_ID_KEY);
+
+        $this->redis->hSet(self::FAILED_KEY, (string) $id, json_encode([
+            'id' => $id,
+            'queue' => $queue,
+            'payload' => $payload,
+            'exception' => $exception,
+            'failed_at' => $failedAt,
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Typed `mixed`: ext-redis returns string|false|Redis depending on version and mode.
+     *
+     * @param mixed $record
+     *
+     * @return array{id: int, queue: string, payload: string, exception: string, failed_at: string}|null
+     */
+    private static function decodeFailure(mixed $record): ?array
+    {
+        $row = is_string($record) ? json_decode($record, true) : null;
+
+        if (!is_array($row) || !is_int($row['id'] ?? null)) {
+            return null;
+        }
+
+        foreach (['queue', 'payload', 'exception', 'failed_at'] as $field) {
+            if (!is_string($row[$field] ?? null)) {
+                return null;
+            }
+        }
+
+        /** @var array{id: int, queue: string, payload: string, exception: string, failed_at: string} $row */
+        return $row;
+    }
+
+    /**
+     * Move entries of the pre-hash `queues:failed:{name}` lists into the hash, so
+     * they get ids and can be retried or deleted. Each entry is LPOPed and stored
+     * one by one; an entry that is not a legacy record is dropped.
+     *
+     * @return void
+     */
+    private function migrateLegacyFailures(): void
+    {
+        $iterator = null;
+
+        do {
+            $keys = $this->redis->scan($iterator, self::LEGACY_FAILED_PATTERN, 100);
+
+            foreach (is_array($keys) ? $keys : [] as $rawKey) {
+                $key = self::stringOrNull($rawKey);
+
+                if ($key === null || $this->redis->type($key) !== Redis::REDIS_LIST) {
+                    continue;
+                }
+
+                $queue = substr($key, strlen('queues:failed:'));
+
+                while (($entry = self::stringOrNull($this->redis->lPop($key))) !== null) {
+                    $legacy = json_decode($entry, true);
+
+                    if (!is_array($legacy) || !is_string($legacy['class'] ?? null) || !is_string($legacy['job'] ?? null)) {
+                        continue;
+                    }
+
+                    $this->storeFailure(
+                        $queue,
+                        json_encode([
+                            'class' => $legacy['class'],
+                            'classes' => is_array($legacy['classes'] ?? null) ? $legacy['classes'] : [$legacy['class']],
+                            'data' => $legacy['job'],
+                            'format' => is_string($legacy['format'] ?? null) ? $legacy['format'] : 'php',
+                        ], JSON_THROW_ON_ERROR),
+                        (is_string($legacy['exception'] ?? null) ? $legacy['exception'] : '')
+                            . (is_string($legacy['trace'] ?? null) ? "\n" . $legacy['trace'] : ''),
+                        is_string($legacy['failed_at'] ?? null) ? $legacy['failed_at'] : date('Y-m-d H:i:s'),
+                    );
+                }
+            }
+        } while ($iterator > 0);
+    }
+
+    /**
+     * An ext-redis reply as a string, or null for false/no value (return types
+     * differ between ext-redis versions).
+     *
+     * @param mixed $value
+     *
+     * @return string|null
+     */
+    private static function stringOrNull(mixed $value): ?string
+    {
+        return is_string($value) ? $value : null;
     }
 }

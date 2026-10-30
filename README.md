@@ -207,7 +207,7 @@ Supports delayed delivery via `available_at` column.
 
 ### Redis Driver
 
-Uses `ext-redis`. Jobs are pushed to `queues:{name}` (RPUSH) and consumed via LPOP (FIFO). Failed jobs are appended to `queues:failed:{name}`.
+Uses `ext-redis`. Jobs are pushed to `queues:{name}` (RPUSH) and consumed via LPOP (FIFO). Failed jobs are stored in the `queues:failed_jobs` hash (ids from `INCR queues:failed_jobs:id`), so `queue:failed` works on Redis too; entries older versions appended to `queues:failed:{name}` lists are moved into the hash on first access.
 
 Delayed jobs (`$delay > 0`, including jobs released by middleware or re-queued for a retry) wait in the sorted set `queues:delayed:{name}`, scored by the time they become available; each `pop()` first moves due jobs onto the list in one atomic Lua script. `size()` counts jobs available now (ready plus due), like the other drivers.
 
@@ -238,7 +238,7 @@ $queue->flush();         // reset between tests
 
 ## Failed jobs
 
-The database driver stores permanently failed jobs and exposes management commands:
+The database and Redis drivers store permanently failed jobs and expose management commands:
 
 ```bash
 php ez queue:failed list            # list all failed jobs

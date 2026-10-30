@@ -151,7 +151,7 @@ php make_module.php <name> --description="..." --services=mysql,redis --extensio
 
 `<name>` is the kebab-case package name; the namespace is derived as
 `EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
-overrides it. Existing exceptions the guess gets wrong: `asyncapi` → `AsyncApi`,
+overrides it. Existing exceptions the guess gets wrong: `asyncapi` → `AsyncApi`, `asyncapi-ui` → `AsyncApiUi`,
 `bignum` → `BigNum`, `dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `graphql-subscriptions` → `GraphQLSubscriptions`, `oauth` → `OAuth`,
 `opcache` → `OPCache`, `openapi` → `OpenApi`, `qrcode` → `QrCode`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
 `websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
@@ -293,7 +293,7 @@ src/
 │   └── CacheJobLock.php            — ez-php/cache-backed lock (soft dependency), shared between web and worker processes; owned release for locks it acquired, forceRelease() otherwise
 ├── Driver/
 │   ├── DatabaseDriver.php          — PDO-backed driver; atomic pop via transaction; supports delayed delivery; implements FailedJobRepositoryInterface
-│   ├── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; delayed jobs in a sorted set, moved when due
+│   ├── RedisDriver.php             — ext-redis driver; RPUSH/LPOP; delayed jobs in a sorted set, moved when due; failed jobs in a hash; implements FailedJobRepositoryInterface
 │   └── InMemoryDriver.php          — in-process driver for tests; honours queue + delay; no infrastructure
 ├── Scheduling/
 │   ├── Scheduler.php               — Registry of recurring jobs; evaluates due tasks by cron expression
@@ -309,7 +309,7 @@ tests/
 ├── QueueServiceProviderTest.php  — Verifies that QueueServiceProvider::boot() auto-registers the queue console commands when the container implements CommandRegistryInterface
 ├── JobSerializerTest.php           — Covers JobSerializer: class list (nested objects, enums, chains), legacy envelopes, malformed payloads
 ├── JobSerializerJsonPayloadTest.php — JSON envelope: stored form, round trip incl. attempts, via InMemoryDriver, rejection of non-JSON classes / bad data
-├── Support/                        — QueuePayload* fixtures: a job with nested objects + an enum (one class per file for PSR-4)
+├── Support/                        — QueuePayload* fixtures (a job with nested objects + an enum) and QueueJsonPayloadJob (used by JobSerializerJsonPayloadTest); one class per file for PSR-4
 ├── JobTest.php                     — Covers Job: defaults, custom props, attempt counter, fail hook, serialization
 ├── WorkerTest.php                  — Covers Worker: runNextJob, success, retry, permanent failure, maxJobs stop
 ├── JobChainTest.php                — Covers JobChain: order, next-after-success, chain dropped on permanent failure
@@ -323,7 +323,7 @@ tests/
 │   ├── DatabaseDriverTest.php      — Covers DatabaseDriver against SQLite :memory: (no MySQL needed)
 │   ├── QueueJobPayloadRoundTripTest.php — Push/pop of a job with nested objects, an enum and a chain through all three drivers; failed-job retry
 │   ├── InMemoryDriverTest.php  — FIFO pop, per-queue isolation, delays, size(), failed(), copies on pop, flush()
-│   └── RedisDriverTest.php         — Covers RedisDriver incl. delayed/released jobs; skipped when ext-redis is unavailable
+│   └── RedisDriverTest.php         — Covers RedisDriver incl. delayed/released jobs, failed-job list/retry/forget/flush and legacy-list migration; skipped when ext-redis is unavailable
 ├── Scheduling/
 │   ├── ScheduledTaskTest.php       — Covers ScheduledTask: cron/daily/hourly/everyMinutes, isDue()
 │   └── SchedulerTest.php           — Covers Scheduler: task registration, dueJobs(), job class resolution
@@ -388,7 +388,7 @@ Retry logic: if `getAttempts() < getMaxTries()`, the job is re-pushed with its c
 
 PDO-backed driver. Auto-creates `jobs` and `failed_jobs` tables (driver-aware DDL for MySQL and SQLite).
 
-**pop() atomicity:** The SELECT and DELETE run inside a PDO transaction. If two workers race, one will win the SELECT and the other will find nothing. No advisory locks are used — the transaction isolation level must be at least `READ COMMITTED`.
+**pop() atomicity:** The SELECT and DELETE run inside a PDO transaction. On MySQL (8.0+) the candidate row is read with `FOR UPDATE SKIP LOCKED`, so concurrent workers each lock a different job instead of waiting on or reading the same one. SQLite has no row locks but serialises writers itself, so the clause is omitted there. In both cases the `DELETE` must report one affected row (`rowCount()`): if it reports none, another worker claimed the job first, the transaction is rolled back and the next candidate is tried. A job is therefore delivered to exactly one worker.
 
 | Method | Behaviour |
 |---|---|
@@ -401,12 +401,13 @@ PDO-backed driver. Auto-creates `jobs` and `failed_jobs` tables (driver-aware DD
 
 ### RedisDriver (`src/Driver/RedisDriver.php`)
 
-ext-redis driver. Queues are Redis lists (`queues:{name}`). Failed jobs go to `queues:failed:{name}`.
+ext-redis driver. Queues are Redis lists (`queues:{name}`). Failed jobs go to the `queues:failed_jobs` hash; implements `FailedJobRepositoryInterface`.
 
 - `push()`: RPUSH — appends to tail; a job with `$delay > 0` is instead `ZADD`ed to `queues:delayed:{name}` (score = available-at time)
 - `pop()`: moves due delayed jobs onto the list (atomic Lua script), then LPOP — removes from head (FIFO)
 - `size()`: LLEN + due members of the delayed set (jobs available now)
-- `failed()`: RPUSH to `queues:failed:{name}` with a serialised `[job, exception, trace, failed_at]` array
+- `failed()`: `INCR queues:failed_jobs:id`, then `HSET queues:failed_jobs <id>` with a JSON record `{id, queue, payload, exception, failed_at}` — the same row shape `DatabaseDriver::all()` returns (`payload` = the `JobSerializer` envelope, `exception` = message + trace)
+- `all()`/`retry()`/`forget()`/`flush()`: `HGETALL` (sorted by id) / `HGET` → `JobSerializer::unserialize()` → `push()` → `HDEL` / `HDEL` / `DEL`. Each first moves entries of legacy `queues:failed:{name}` lists (written before 2.6.5) into the hash: `SCAN` for the pattern, `LPOP` entry by entry, convert `{class, classes, format, job, exception, trace, failed_at}` to the new record; unparseable entries are dropped
 
 **Delay:** honoured — see Design Decisions ("RedisDriver honours `$delay` via a sorted set").
 
@@ -466,7 +467,7 @@ When the queue driver implements `FailedJobRepositoryInterface`, the failed-job 
 
 ### FailedJobRepositoryInterface (`src/FailedJobRepositoryInterface.php`)
 
-Contract for failed-job stores. `DatabaseDriver` implements it; `RedisDriver` does not.
+Contract for failed-job stores. `DatabaseDriver` and `RedisDriver` implement it; `InMemoryDriver` does not (see Design Decisions).
 
 | Method | Behaviour |
 |---|---|
@@ -517,10 +518,11 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 - **RedisDriver honours `$delay` via a sorted set, without a daemon** — Delayed jobs are `ZADD`ed to `queues:delayed:{name}` (score = available-at Unix time); every `pop()` first runs one Lua script that moves up to 100 due members onto the `queues:{name}` list, so the move is atomic across concurrent workers and needs no separate polling process. Each delayed member gets a random `id` in its JSON envelope because sorted-set members are unique — two byte-identical jobs would otherwise merge into one. This is required, not optional: the Worker re-pushes released jobs (`RateLimited`, `WithoutOverlapping` → `releaseAfter()`) and retries with their delay, and a driver that ignored delays would pop them straight back in a tight loop.
 - **Commands are auto-registered through `CommandRegistryInterface`, not `Application`** — `boot()` registers them through `ez-php/contracts`' `ServiceProvider::registerCommand()` helper, which forwards only when the container implements `CommandRegistryInterface`, so the module never imports the concrete `Application` class and stays usable with a plain `ContainerInterface`.
 - **The storage envelope lists every class in the payload** — `JobSerializer` records all `O:`/`C:`/`E:` class names found in the serialized job and `pop()` passes exactly that list to `allowed_classes`. `allowed_classes` applies to every nested object, so restricting it to the top-level job class turned a `Mailable`, `PushMessage`, event or chained job into `__PHP_Incomplete_Class` (a `TypeError` on typed properties). The list is stored next to the payload, so it limits instantiation to what was pushed but does not protect against an attacker who can write queue rows — queue storage must only be written by `push()`/`failed()`. Envelopes without a `classes` key (written before this change) fall back to the top-level class.
+- **Redis failures live in one hash with `INCR` ids** — `FailedJobRepositoryInterface::retry()`/`forget()` take an `int` id, which the old per-queue lists (`queues:failed:{name}`, addressable only by position) could not provide. One hash keyed by an `INCR` counter gives stable ids across queues and O(1) lookup. Legacy lists are migrated lazily by the repository methods rather than by a separate command, so upgraded applications see their old failures in `queue:failed list` without a deployment step; the migration `LPOP`s entry by entry, so a second process running it at the same time cannot duplicate an entry.
 - **`failed()` is on the interface** — Driver-specific failure stores (DB table vs Redis list) require the interface to expose a `failed()` method. The alternative (casting to a driver-specific interface in the Worker) would couple the Worker to concrete drivers.
 - **`InMemoryDriver` serializes jobs even though it holds them in memory** — Storing the object by reference would be faster, but a job that cannot be serialized would then pass its tests against the in-memory driver and fail only against `DatabaseDriver`/`RedisDriver` in production. Round-tripping through `serialize()`/`unserialize()` makes the test double reproduce the real constraint, and means a popped job is a copy rather than the pushed instance.
 - **`InMemoryDriver` honours `$delay`, like the other drivers** — It stores an `available_at` timestamp per entry, matching `DatabaseDriver`. A test double that ignored delay would let delay-dependent code pass here and break against the database driver.
-- **`InMemoryDriver` does not implement `FailedJobRepositoryInterface`** — Failures are recorded in an array and exposed via `failedJobs()` for assertions. Implementing the repository contract would imply `queue:failed` support (retry/forget/flush across processes), which an in-process store cannot honestly provide. Resolving `FailedJobRepositoryInterface` with the memory driver active throws, exactly as it does with Redis.
+- **`InMemoryDriver` does not implement `FailedJobRepositoryInterface`** — Failures are recorded in an array and exposed via `failedJobs()` for assertions. Implementing the repository contract would imply `queue:failed` support (retry/forget/flush across processes), which an in-process store cannot honestly provide. Resolving `FailedJobRepositoryInterface` with the memory driver active throws.
 - **Job middleware wraps `handle()` inside the `Worker`, not at dispatch.** `Job::middleware()` returns fresh middleware instances on every execution (they are never serialized with the job, which is why locks/limiters are passed in from the job's own `middleware()` method). Only `Job` subclasses get middleware; a bare `JobInterface` implementation runs without.
 - **A middleware skips a job by calling `Job::releaseAfter($seconds)` and not calling `$next`.** The Worker then re-pushes a copy with that delay — floored at 1 second, because a 0-second release makes a still-blocked job available at once and the Worker would pop it straight back in a tight loop — and gives the attempt back (`Job::withRelease()`), so waiting for a lock never exhausts `maxTries`. Released jobs are deliberately not counted in `Worker::getStats()` — its array shape is public API. A middleware that skips *without* releasing leaves the job counted as processed.
 - **`ez-php/cache` and `ez-php/rate-limiter` are soft dependencies (`require-dev` + `suggest`).** `Lock\CacheJobLock` and `Middleware\RateLimited` reference them; PSR-4 only loads those classes when an application uses them, so `ez-php/queue` itself stays free of both. `JobLockInterface` is owned by this module so the core pipeline never imports cache types.
@@ -528,8 +530,6 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 - **Chains travel inside the serialized payload.** `JobChain::dispatch()` pushes only the first job; the remaining jobs are a private `list<Job>` on it (`Job::withChain()`), so every driver works unchanged and no extra table is needed. The Worker pushes `Job::nextInChain()` after a successful run; a permanently failed job drops the rest of the chain (no failure callbacks, no batches/progress UI — deliberately out of scope). Chain steps must extend `Job`.
 - **No static façade** — Queue dispatch is done via the injected `QueueInterface`. No `Queue::push()` static helper is provided. The framework's service locator pattern is not used here — call sites inject the interface.
 - **`Scheduling\Scheduler` has no overlap prevention, unlike `ez-php/scheduler`.** Two overlapping `queue:schedule` cron ticks can both match the same due `ScheduledTask` and push its job twice — nothing here dedups within a matching minute. This is intentional scope, not an oversight: adding mutex support would duplicate `ez-php/scheduler`'s `MutexInterface`/driver design rather than reuse it, and the two schedulers' data models (job-class-based here vs. console-command-based there) are different enough that merging them would be a real package merge. Applications that need overlap prevention run `queue:schedule` through `ez-php/scheduler`'s mutex-guarded executor instead of cron directly — documented in `modules/scheduler/README.md` § "Reconciling with `ez-php/queue`'s own scheduler" and this package's own README § "Scheduling". No code dependency between the two packages either way.
-
----
 - **`ez-php/framework` is a `require-dev` dependency only.** Nothing in `src/` imports a framework class — the module needs `ez-php/contracts` (`ServiceProvider`, `QueueInterface`, …), `ez-php/console` (commands) and `ez-php/support` (`CronExpression`, zero dependencies); the framework is only needed by the test suite (`ez-php/testing-application`). Declaring it in `require` would force the whole kernel onto anything that installs the queue.
 
 ## Testing Approach
@@ -548,7 +548,7 @@ $scheduler->job(CustomJob::class)->cron('30 6 * * 1');
 
 | Concern | Where it belongs |
 |---|---|
-| Job scheduling (cron-style) | `ez-php/scheduler` |
+| Mutex-guarded cron scheduling of arbitrary tasks, `scheduler:run`/`scheduler:list` | `ez-php/scheduler` (this module's `Scheduling\Scheduler`/`queue:schedule` only push jobs on a cron, with no overlap prevention) |
 | Async / parallel execution | Application layer (pcntl, Amp, ReactPHP) |
 | Queue monitoring / dashboard | Application layer |
 | Rate-limiting logic itself | `ez-php/rate-limiter` (this module only ships the `Middleware\RateLimited` adapter) |
